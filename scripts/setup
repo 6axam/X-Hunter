@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_path="$project_root/.env"
+example_path="$project_root/.env.example"
+
+if [[ ! -f "$example_path" ]]; then
+  echo "Не найден .env.example" >&2
+  exit 1
+fi
+
+if [[ ! -f "$env_path" ]]; then
+  cp "$example_path" "$env_path"
+  session_secret="$(openssl rand -hex 32)"
+  sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$session_secret/" "$env_path"
+  chmod 0600 "$env_path"
+  echo "Создан .env с внутренним SESSION_SECRET. Заполните внешние значения перед живым запуском."
+else
+  chmod 0600 "$env_path"
+  echo ".env уже существует; содержимое не изменено."
+fi
+
+for required_command in docker git openssl; do
+  if ! command -v "$required_command" >/dev/null 2>&1; then
+    echo "Не найдена команда: $required_command" >&2
+    exit 1
+  fi
+done
+
+echo "Базовая конфигурация подготовлена."
