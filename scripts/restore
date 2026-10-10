@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 || ! -f "$1" ]]; then
+  echo "Использование: scripts/restore backups/database-YYYYMMDDTHHMMSSZ.dump" >&2
+  exit 1
+fi
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+dump_path="$1"
+
+docker compose -f "$project_root/compose.yaml" exec -T postgres \
+  pg_restore -U olx_hunter -d olx_hunter --clean --if-exists --no-owner \
+  < "$dump_path"
+echo "База восстановлена из $dump_path. Перезапустите api/worker/scheduler."

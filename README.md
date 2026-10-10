@@ -1,19 +1,30 @@
 # OLX Hunter
 
-Личный Telegram-бот и Mini App для управления поисками OLX.ua. Проект строится по [PROJECT_PLAN.md](PROJECT_PLAN.md), раздел 22.
+Личный Telegram-бот и Mini App для наблюдения за выдачами OLX.ua. Сервис импортирует URL, применяет цену и текстовые правила к полному описанию, хранит находки и фото, сообщает о новых объявлениях и снижении цены. OpenRouter включается отдельно на уровне поиска.
 
-Сейчас реализуется первый вертикальный сценарий. Живой мониторинг OLX не считается проверенным, пока не настроен и не испытан допустимый источник данных. Тестовые фикстуры служат только для проверки кода.
-
-## Быстрый старт разработки
+## Быстрый локальный запуск
 
 ```bash
 ./scripts/setup
-docker compose up --build
+docker compose up --build gateway api worker scheduler postgres redis
 ```
 
-После запуска:
+Откройте `http://localhost`. В development-режиме интерфейс использует явно включённую локальную авторизацию. Сервис `bot` запускайте после заполнения `TELEGRAM_BOT_TOKEN` и `OWNER_TELEGRAM_ID`:
 
-- API: `http://localhost:8080/api/v1/health`
-- Mini App: `http://localhost:8080/`
+```bash
+docker compose up -d bot
+```
 
-Подробности будут дополняться в `docs/SETUP.md`. Текущий статус и точка продолжения находятся в `docs/PROGRESS.md`.
+Проверки без внешних ключей:
+
+```bash
+cd backend && uv sync --frozen && uv run pytest -q && uv run ruff check app tests migrations
+cd ../frontend && npm ci && npm run typecheck && npm test && npm run build
+```
+
+Живой HTTP-сбор включается только через `SOURCE_HTTP_ENABLED=true`. Код сетевого адаптера проверен контролируемыми ответами, но доступность OLX с конкретного сервера и длительный пилот этим не подтверждены.
+
+- [Настройка](docs/SETUP.md)
+- [Архитектура](docs/ARCHITECTURE.md)
+- [Эксплуатация и бэкапы](docs/OPERATIONS.md)
+- [Текущий прогресс и ограничения](docs/PROGRESS.md)

@@ -60,7 +60,9 @@ async def get_current_user(
             message="Авторизация Telegram ещё не выполнена.",
         )
 
-    if settings.owner_telegram_id is None or telegram_id != settings.owner_telegram_id:
+    if settings.owner_telegram_id is not None and telegram_id != settings.owner_telegram_id:
+        raise AppError(status_code=403, code="access_denied", message="Доступ запрещён.")
+    if settings.owner_telegram_id is None and not settings.dev_auth_enabled:
         raise AppError(status_code=403, code="access_denied", message="Доступ запрещён.")
 
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))

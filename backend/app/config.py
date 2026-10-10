@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -24,9 +25,13 @@ class Settings(BaseSettings):
     media_root: Path = Path("./media")
     media_max_bytes: int = 10_000_000
     media_max_pixels: int = 30_000_000
-    media_allowed_hosts: list[str] = Field(default_factory=lambda: ["olxcdn.com"])
+    media_allowed_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["olxcdn.com"]
+    )
     export_root: Path = Path("./exports")
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:5173"]
+    )
     default_timezone: str = "Europe/Kyiv"
     scan_interval_minutes: int = 15
     scan_max_pages: int = 3
@@ -38,6 +43,11 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     openrouter_model: str | None = None
     openrouter_daily_budget_usd: str = "1.00"
+
+    @field_validator("owner_telegram_id", mode="before")
+    @classmethod
+    def blank_owner_id_is_unconfigured(cls, value: object) -> object:
+        return None if value == "" else value
 
     @field_validator("cors_origins", mode="before")
     @classmethod

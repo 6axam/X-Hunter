@@ -1,0 +1,90 @@
+name: olx-hunter
+
+x-backend: &backend
+  build:
+    context: ./backend
+  env_file: .env
+  restart: unless-stopped
+  volumes:
+    - media_data:/data/media
+    - export_data:/data/exports
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.gateway
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-http://localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    <<: *backend
+    command: ["python", "-m", "app.bot.main"]
+
+  worker:
+    <<: *backend
+    command: ["celery", "-A", "app.jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+
+  scheduler:
+    <<: *backend
+    command: ["celery", "-A", "app.jobs.celery_app:celery_app", "beat", "--loglevel=INFO"]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: olx_hunter
+      POSTGRES_USER: olx_hunter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/setup first}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U olx_hunter -d olx_hunter"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
+  export_data:
+  caddy_data:
+  caddy_config:

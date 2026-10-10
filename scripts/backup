@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+backup_root="$project_root/backups"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$backup_root"
+
+docker compose -f "$project_root/compose.yaml" exec -T postgres \
+  pg_dump -U olx_hunter -d olx_hunter --format=custom \
+  > "$backup_root/database-$timestamp.dump"
+
+docker compose -f "$project_root/compose.yaml" run --rm --no-deps -T api \
+  tar -C /data/media -czf - . \
+  > "$backup_root/media-$timestamp.tar.gz"
+
+find "$backup_root" -type f -mtime +14 -delete
+echo "Созданы локальные резервные копии в $backup_root."

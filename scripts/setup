@@ -13,7 +13,10 @@ fi
 if [[ ! -f "$env_path" ]]; then
   cp "$example_path" "$env_path"
   session_secret="$(openssl rand -hex 32)"
+  database_secret="$(openssl rand -hex 24)"
   sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$session_secret/" "$env_path"
+  sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$database_secret/" "$env_path"
+  sed -i "s#^DATABASE_URL=.*#DATABASE_URL=postgresql+asyncpg://olx_hunter:$database_secret@postgres:5432/olx_hunter#" "$env_path"
   chmod 0600 "$env_path"
   echo "Создан .env с внутренним SESSION_SECRET. Заполните внешние значения перед живым запуском."
 else
@@ -28,4 +31,19 @@ for required_command in docker git openssl; do
   fi
 done
 
-echo "Базовая конфигурация подготовлена."
+mkdir -p "$project_root/media" "$project_root/exports" "$project_root/backups"
+
+if ! docker compose version >/dev/null 2>&1; then
+  echo "Docker Compose plugin недоступен" >&2
+  exit 1
+fi
+
+if grep -q '^TELEGRAM_BOT_TOKEN=$' "$env_path"; then
+  echo "Telegram пока не настроен: заполните TELEGRAM_BOT_TOKEN и OWNER_TELEGRAM_ID."
+fi
+
+if grep -q '^PUBLIC_BASE_URL=http://localhost' "$env_path"; then
+  echo "Для Telegram Mini App укажите публичный HTTPS PUBLIC_BASE_URL и APP_DOMAIN."
+fi
+
+echo "Конфигурация и рабочие каталоги подготовлены."

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 || ! -f "$1" ]]; then
+  echo "Использование: scripts/test-restore backups/database-YYYYMMDDTHHMMSSZ.dump" >&2
+  exit 1
+fi
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+dump_path="$1"
+test_database="olx_hunter_restore_test"
+
+cleanup() {
+  docker compose -f "$project_root/compose.yaml" exec -T postgres \
+    dropdb -U olx_hunter --if-exists "$test_database" >/dev/null
+}
+trap cleanup EXIT
+
+cleanup
+docker compose -f "$project_root/compose.yaml" exec -T postgres \
+  createdb -U olx_hunter "$test_database"
+docker compose -f "$project_root/compose.yaml" exec -T postgres \
+  pg_restore -U olx_hunter -d "$test_database" --no-owner \
+  < "$dump_path"
+docker compose -f "$project_root/compose.yaml" exec -T postgres \
+  psql -U olx_hunter -d "$test_database" -v ON_ERROR_STOP=1 \
+  -c "SELECT version_num FROM alembic_version;" >/dev/null
+echo "Тест восстановления прошёл в чистой базе $test_database."

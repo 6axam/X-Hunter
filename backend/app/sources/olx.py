@@ -5,10 +5,12 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import httpx
 from pydantic import BaseModel, Field, model_validator
 
 from app.api.errors import AppError
 from app.sources.base import ListingSource, SourceResult, SourceState
+from app.sources.parser import parse_listing_html, parse_search_html
 
 ALLOWED_SEARCH_HOSTS = {"olx.ua", "www.olx.ua"}
 TRACKING_PARAMETERS = {
@@ -61,8 +63,11 @@ class OlxSource(ListingSource):
         "search[order]",
     }
 
-    def __init__(self, *, http_enabled: bool = False) -> None:
+    def __init__(
+        self, *, http_enabled: bool = False, client: httpx.AsyncClient | None = None
+    ) -> None:
         self.http_enabled = http_enabled
+        self.client = client
 
     @staticmethod
     def _validate_url(url: str) -> tuple[str, str, str, str]:
@@ -187,10 +192,19 @@ class OlxSource(ListingSource):
                 error_code="source_http_disabled",
                 message="Сетевой источник OLX не включён и не проверен.",
             )
+        pairs = parse_qsl(urlsplit(specification.current_url).query, keep_blank_values=True)
+        pairs = [(key, value) for key, value in pairs if key != "page"]
+        if page > 1:
+            pairs.append(("page", str(page)))
+        parsed = urlsplit(specification.current_url)
+        url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(pairs), ""))
+        response = await self._fetch_html(url)
+        if response.state is not SourceState.COMPLETE:
+            return response
         return SourceResult(
-            state=SourceState.UNAVAILABLE,
-            error_code="source_adapter_pending",
-            message="Сетевой адаптер ещё не реализован.",
+            state=SourceState.COMPLETE,
+            data=[item.model_dump(mode="json") for item in parse_search_html(response.data)],
+            metadata={"pages_checked": 1},
         )
 
     async def fetch_listing(self, url: str) -> SourceResult:
@@ -201,7 +215,18 @@ class OlxSource(ListingSource):
                 error_code="source_http_disabled",
                 message="Сетевой источник OLX не включён и не проверен.",
             )
-        return SourceResult(state=SourceState.UNAVAILABLE, error_code="source_adapter_pending")
+        response = await self._fetch_html(url)
+        if response.state is not SourceState.COMPLETE:
+            return response
+        try:
+            listing = parse_listing_html(response.data, url)
+        except Exception:
+            return SourceResult(
+                state=SourceState.PARTIAL,
+                error_code="listing_structure_changed",
+                message="Структура карточки OLX не распознана полностью.",
+            )
+        return SourceResult(state=SourceState.COMPLETE, data=listing.model_dump(mode="json"))
 
     async def check_availability(self, url: str) -> SourceResult:
         self._validate_url(url)
@@ -211,4 +236,69 @@ class OlxSource(ListingSource):
                 error_code="source_http_disabled",
                 message="Сетевая проверка актуальности не включена.",
             )
-        return SourceResult(state=SourceState.UNAVAILABLE, error_code="source_adapter_pending")
+        return await self._fetch_html(url, availability_only=True)
+
+    async def _fetch_html(self, url: str, *, availability_only: bool = False) -> SourceResult:
+        current = url
+        own_client = self.client is None
+        client = self.client or httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5))
+        try:
+            for _ in range(4):
+                self._validate_url(current)
+                response = await client.get(
+                    current,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                            "Chrome/131 Safari/537.36"
+                        ),
+                        "Accept-Language": "uk-UA,uk;q=0.9,ru;q=0.8",
+                    },
+                    follow_redirects=False,
+                )
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        return SourceResult(
+                            state=SourceState.PARTIAL, error_code="redirect_without_location"
+                        )
+                    current = str(response.url.join(location))
+                    continue
+                if response.status_code in {404, 410}:
+                    return SourceResult(
+                        state=SourceState.UNAVAILABLE,
+                        error_code="listing_removed" if availability_only else "page_not_found",
+                        metadata={"confirmed": availability_only},
+                    )
+                if response.status_code in {403, 429}:
+                    return SourceResult(
+                        state=SourceState.BLOCKED,
+                        error_code=f"source_http_{response.status_code}",
+                    )
+                if response.status_code >= 500:
+                    return SourceResult(
+                        state=SourceState.PARTIAL,
+                        error_code="source_server_error",
+                    )
+                response.raise_for_status()
+                if availability_only:
+                    return SourceResult(state=SourceState.COMPLETE)
+                content_type = response.headers.get("content-type", "")
+                if "text/html" not in content_type:
+                    return SourceResult(
+                        state=SourceState.PARTIAL,
+                        error_code="unexpected_content_type",
+                    )
+                body = response.content
+                if len(body) > 5_000_000:
+                    return SourceResult(
+                        state=SourceState.PARTIAL,
+                        error_code="source_body_too_large",
+                    )
+                return SourceResult(state=SourceState.COMPLETE, data=response.text)
+            return SourceResult(state=SourceState.PARTIAL, error_code="too_many_redirects")
+        except (httpx.TimeoutException, httpx.NetworkError):
+            return SourceResult(state=SourceState.PARTIAL, error_code="source_network_error")
+        finally:
+            if own_client:
+                await client.aclose()

@@ -53,6 +53,9 @@ class RunService:
         scanner = ScanService(self.db)
         candidates = [ListingCandidate.model_validate(item) for item in (result.data or [])]
         for candidate in candidates:
+            details = await self.source.fetch_listing(candidate.canonical_url)
+            if details.state is SourceState.COMPLETE and details.data:
+                candidate = ListingCandidate.model_validate(details.data)
             await scanner.ingest(search, candidate)
         if result.state is SourceState.COMPLETE:
             await scanner.complete_baseline(search)

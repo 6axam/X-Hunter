@@ -1,3 +1,37 @@
 # Эксплуатация
 
-Команды запуска, миграций, диагностики, резервного копирования и восстановления будут добавляться вместе с соответствующими работающими компонентами. Наличие этого файла не означает, что production-развёртывание уже проверено.
+## Диагностика
+
+```bash
+docker compose ps
+docker compose logs --tail=200 api worker scheduler bot gateway
+curl -fsS http://localhost/api/v1/health
+curl -fsS http://localhost/api/v1/ready
+docker compose run --rm api alembic upgrade head
+```
+
+`source_http_403`, `source_http_429`, `source_network_error` и `source_server_error` требуют backoff и не подтверждают снятие. `listing_removed` считается сигналом только для прямой ссылки; удаление выполняется после второго подтверждения.
+
+## Резервные копии
+
+```bash
+./scripts/backup
+./scripts/test-restore backups/database-YYYYMMDDTHHMMSSZ.dump
+./scripts/restore backups/database-YYYYMMDDTHHMMSSZ.dump
+```
+
+`backup` сохраняет custom dump PostgreSQL и архив медиа в `backups/`, удаляя локальные копии старше 14 дней. `test-restore` разворачивает dump в отдельную чистую базу и проверяет Alembic revision. `restore` очищает и заменяет рабочую базу, поэтому запускается оператором с выбранным dump.
+
+Копии на том же сервере не защищают от потери диска. Настройте отдельное шифрованное внешнее копирование `backups/`; проект не объявляет его выполненным автоматически.
+
+## Обновление
+
+```bash
+./scripts/backup
+git pull --ff-only
+docker compose build
+docker compose up -d
+docker compose ps
+```
+
+После запуска проверьте `/ready`, логи миграции и один ручной scan. Рабочие `.env`, базы, экспорты и медиа не коммитятся.

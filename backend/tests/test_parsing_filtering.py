@@ -1,7 +1,12 @@
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
+import pytest
+
 from app.services.filtering import evaluate
+from app.sources.base import SourceState
+from app.sources.olx import OlxSource
 from app.sources.parser import parse_listing_html, parse_search_html
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -51,3 +56,33 @@ def test_filter_rejects_accessory_only_title() -> None:
     )
     assert decision.decision == "reject"
     assert decision.reasons[0]["code"] == "accessory_only"
+
+
+@pytest.mark.asyncio
+async def test_http_source_fetches_fixture_documents_and_classifies_404() -> None:
+    search_html = (FIXTURES / "search_page.html").read_text()
+    listing_html = (FIXTURES / "listing_page.html").read_text()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("removed-IDgone.html"):
+            return httpx.Response(404, headers={"content-type": "text/html"})
+        if "/d/" in request.url.path:
+            return httpx.Response(200, text=listing_html, headers={"content-type": "text/html"})
+        return httpx.Response(200, text=search_html, headers={"content-type": "text/html"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        source = OlxSource(http_enabled=True, client=client)
+        parsed = source.parse_search_url("https://www.olx.ua/uk/elektronika/")
+        assert parsed.search is not None
+        page = await source.fetch_search_page(parsed.search)
+        listing = await source.fetch_listing(page.data[0]["canonical_url"])
+        removed = await source.check_availability(
+            "https://www.olx.ua/d/uk/obyavlenie/removed-IDgone.html"
+        )
+
+    assert page.state is SourceState.COMPLETE and len(page.data) == 2
+    assert listing.state is SourceState.COMPLETE
+    assert listing.data["description"] == "Не был в ремонте. Полный комплект."
+    assert removed.state is SourceState.UNAVAILABLE
+    assert removed.metadata["confirmed"] is True
