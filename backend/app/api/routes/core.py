@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.api.dependencies import CurrentUser, DatabaseSession
 from app.api.schemas import (
     FilterSchemaResponse,
+    FindingResponse,
+    FindingStatePatch,
+    FindingStateResponse,
     MeResponse,
+    ScanRunResponse,
     SearchCreateRequest,
     SearchDraftPatch,
     SearchDraftResponse,
@@ -17,6 +21,8 @@ from app.api.schemas import (
     SearchResponse,
 )
 from app.config import Settings, get_settings
+from app.services.findings import FindingService
+from app.services.runs import RunService
 from app.services.searches import SearchService
 from app.sources.olx import OlxSource
 
@@ -138,3 +144,48 @@ async def patch_search(
 async def delete_search(search_id: UUID, user: CurrentUser, searches: Searches) -> Response:
     await searches.delete_search(user, search_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/searches/{search_id}/scans", response_model=ScanRunResponse, tags=["searches"])
+async def start_scan(
+    search_id: UUID,
+    user: CurrentUser,
+    searches: Searches,
+    db: DatabaseSession,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ScanRunResponse:
+    search = await searches.get_search(user, search_id)
+    run = await RunService(db, OlxSource(http_enabled=settings.source_http_enabled)).start(search)
+    return ScanRunResponse.model_validate(run)
+
+
+@router.get("/findings", response_model=list[FindingResponse], tags=["findings"])
+async def list_findings(
+    user: CurrentUser,
+    db: DatabaseSession,
+    saved: bool | None = Query(default=None),
+    finding_status: str | None = Query(default="all", alias="status"),
+) -> list[FindingResponse]:
+    items = await FindingService(db).list(user, saved=saved, status=finding_status)
+    return [FindingResponse.model_validate(item) for item in items]
+
+
+@router.get("/findings/{listing_id}", response_model=FindingResponse, tags=["findings"])
+async def get_finding(listing_id: UUID, user: CurrentUser, db: DatabaseSession) -> FindingResponse:
+    return FindingResponse.model_validate(await FindingService(db).get(user, listing_id))
+
+
+@router.patch(
+    "/findings/{listing_id}/state",
+    response_model=FindingStateResponse,
+    tags=["findings"],
+)
+async def patch_finding_state(
+    listing_id: UUID,
+    body: FindingStatePatch,
+    user: CurrentUser,
+    db: DatabaseSession,
+) -> FindingStateResponse:
+    changes = body.model_dump(exclude_unset=True)
+    result = await FindingService(db).patch_state(user, listing_id, changes)
+    return FindingStateResponse.model_validate(result)

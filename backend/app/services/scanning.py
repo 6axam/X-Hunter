@@ -128,7 +128,7 @@ class ScanService:
             match.last_seen_at = now
 
         baseline = search.baseline_completed_at is None
-        if decision.decision == "accepted" and is_new_match and not baseline:
+        if decision.decision == "match" and is_new_match and not baseline:
             await self._event(
                 search,
                 listing,
@@ -139,7 +139,7 @@ class ScanService:
 
         threshold = int(search.event_settings.get("price_drop_percent", 5))
         if (
-            decision.decision == "accepted"
+            decision.decision == "match"
             and previous_version is not None
             and previous_version.price is not None
             and candidate.price is not None

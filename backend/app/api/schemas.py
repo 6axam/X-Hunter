@@ -82,6 +82,57 @@ class MeResponse(BaseModel):
     capabilities: dict[str, bool]
 
 
+class FindingStatePatch(BaseModel):
+    saved: bool | None = None
+    hidden: bool | None = None
+    seen: bool | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class FindingStateResponse(BaseModel):
+    saved: bool
+    hidden: bool
+    seen: bool
+    note: str | None
+
+
+class FindingResponse(BaseModel):
+    id: UUID
+    title: str
+    description: str | None
+    price: str | None
+    currency: str | None
+    city: str | None
+    condition: str | None
+    canonical_url: str
+    decision: str
+    reasons: list[dict[str, Any]]
+    first_seen_at: datetime
+    last_seen_at: datetime
+    saved: bool
+    hidden: bool
+    seen: bool
+    note: str | None
+    cover_media_id: UUID | None
+    searches: list[dict[str, str]]
+    media: list[dict[str, Any]] | None = None
+
+
+class ScanRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    search_id: UUID
+    search_revision: int
+    status: str
+    pages_checked: int
+    items_seen: int
+    counters: dict[str, Any]
+    started_at: datetime | None
+    finished_at: datetime | None
+    error_code: str | None
+
+
 class FilterSchemaResponse(BaseModel):
     fields: list[dict[str, Any]]
 

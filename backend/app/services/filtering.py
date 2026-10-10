@@ -36,10 +36,10 @@ def evaluate(candidate: ListingCandidate, specification: dict, rules: dict) -> F
     price_to = specification.get("price_to")
     if price_from is not None and candidate.price is not None:
         if candidate.price < Decimal(str(price_from)):
-            return FilterDecision("rejected", [{"code": "price_below_min"}])
+            return FilterDecision("reject", [{"code": "price_below_min"}])
     if price_to is not None and candidate.price is not None:
         if candidate.price > Decimal(str(price_to)):
-            return FilterDecision("rejected", [{"code": "price_above_max"}])
+            return FilterDecision("reject", [{"code": "price_above_max"}])
 
     for group in rules.get("required_groups", []):
         scope = group.get("scope", "both")
@@ -47,7 +47,7 @@ def evaluate(candidate: ListingCandidate, specification: dict, rules: dict) -> F
         options = [normalize(value) for value in group.get("values", []) if normalize(value)]
         if options and not any(option in text for option in options):
             return FilterDecision(
-                "rejected",
+                "reject",
                 [{"code": "required_group_missing", "values": group.get("values", [])}],
             )
         if options:
@@ -57,11 +57,11 @@ def evaluate(candidate: ListingCandidate, specification: dict, rules: dict) -> F
         phrase = normalize(rule.get("value"))
         text = _scoped_text(candidate, rule.get("scope", "both"))
         if phrase and phrase in text:
-            return FilterDecision("rejected", [{"code": "excluded_phrase", "value": phrase}])
+            return FilterDecision("reject", [{"code": "excluded_phrase", "value": phrase}])
 
     if rules.get("reject_accessories"):
         title_words = set(normalize(candidate.title).split())
         if title_words.intersection(ACCESSORY_WORDS):
-            return FilterDecision("rejected", [{"code": "accessory_only"}])
+            return FilterDecision("reject", [{"code": "accessory_only"}])
 
-    return FilterDecision("accepted", reasons or [{"code": "rules_passed"}])
+    return FilterDecision("match", reasons or [{"code": "rules_passed"}])

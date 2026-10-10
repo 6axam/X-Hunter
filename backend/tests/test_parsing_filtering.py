@@ -38,7 +38,7 @@ def test_strict_filter_reads_description_without_semantic_negation() -> None:
             "excluded": [{"value": "ремонт", "scope": "description"}],
         },
     )
-    assert decision.decision == "rejected"
+    assert decision.decision == "reject"
     assert decision.reasons[0]["code"] == "excluded_phrase"
 
 
@@ -49,5 +49,5 @@ def test_filter_rejects_accessory_only_title() -> None:
         {},
         {"required_groups": [], "excluded": [], "reject_accessories": True},
     )
-    assert decision.decision == "rejected"
+    assert decision.decision == "reject"
     assert decision.reasons[0]["code"] == "accessory_only"
