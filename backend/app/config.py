@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    app_env: str = "development"
+    dev_auth_enabled: bool = False
+    session_secret: str = "development-only-change-me"
+    database_url: str = "sqlite+aiosqlite:///./olx_hunter.sqlite3"
+    redis_url: str = "redis://localhost:6379/0"
+    media_root: Path = Path("./media")
+    export_root: Path = Path("./exports")
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    default_timezone: str = "Europe/Kyiv"
+    scan_interval_minutes: int = 15
+    scan_max_pages: int = 3
+    source_http_enabled: bool = False
+
+    telegram_bot_token: str | None = None
+    owner_telegram_id: int | None = None
+    public_base_url: str = "http://localhost:8080"
+    openrouter_api_key: str | None = None
+    openrouter_model: str | None = None
+    openrouter_daily_budget_usd: str = "1.00"
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("session_secret")
+    @classmethod
+    def require_production_secret(cls, value: str, info) -> str:
+        app_env = info.data.get("app_env", "development")
+        if app_env == "production" and len(value) < 32:
+            raise ValueError("SESSION_SECRET must contain at least 32 characters in production")
+        return value
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
