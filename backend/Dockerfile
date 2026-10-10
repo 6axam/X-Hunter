@@ -6,6 +6,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv==0.9.5
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
+RUN uv run playwright install --with-deps chromium
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY app ./app

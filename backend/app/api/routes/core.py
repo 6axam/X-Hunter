@@ -41,7 +41,13 @@ router = APIRouter()
 
 
 def search_service(db: DatabaseSession, settings: Annotated[Settings, Depends(get_settings)]):
-    return SearchService(db, OlxSource(http_enabled=settings.source_http_enabled))
+    return SearchService(
+        db,
+        OlxSource(
+            http_enabled=settings.source_http_enabled,
+            browser_enabled=settings.source_browser_enabled,
+        ),
+    )
 
 
 Searches = Annotated[SearchService, Depends(search_service)]
@@ -168,7 +174,10 @@ async def start_scan(
     search = await searches.get_search(user, search_id)
     run = await RunService(
         db,
-        OlxSource(http_enabled=settings.source_http_enabled),
+        OlxSource(
+            http_enabled=settings.source_http_enabled,
+            browser_enabled=settings.source_browser_enabled,
+        ),
         max_pages=settings.scan_max_pages,
     ).start(search)
     return ScanRunResponse.model_validate(run)

@@ -85,7 +85,11 @@ async def import_link(message: Message) -> None:
             await db.commit()
             await db.refresh(owner)
         draft = await SearchService(
-            db, OlxSource(http_enabled=settings.source_http_enabled)
+            db,
+            OlxSource(
+                http_enabled=settings.source_http_enabled,
+                browser_enabled=settings.source_browser_enabled,
+            ),
         ).import_url(owner, message.text.strip())
     keyboard = None
     if app_keyboard() is not None:

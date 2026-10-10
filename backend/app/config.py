@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     scan_interval_minutes: int = 15
     scan_max_pages: int = 3
     source_http_enabled: bool = False
+    source_browser_enabled: bool = False
+    source_browser_headless: bool = True
 
     telegram_bot_token: str | None = None
     owner_telegram_id: int | None = None

@@ -64,9 +64,14 @@ class OlxSource(ListingSource):
     }
 
     def __init__(
-        self, *, http_enabled: bool = False, client: httpx.AsyncClient | None = None
+        self,
+        *,
+        http_enabled: bool = False,
+        browser_enabled: bool = False,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.http_enabled = http_enabled
+        self.browser_enabled = browser_enabled
         self.client = client
 
     @staticmethod
@@ -239,6 +244,70 @@ class OlxSource(ListingSource):
         return await self._fetch_html(url, availability_only=True)
 
     async def _fetch_html(self, url: str, *, availability_only: bool = False) -> SourceResult:
+        if self.browser_enabled:
+            return await self._fetch_html_browser(url, availability_only=availability_only)
+        return await self._fetch_html_http(url, availability_only=availability_only)
+
+    async def _fetch_html_browser(
+        self, url: str, *, availability_only: bool = False
+    ) -> SourceResult:
+        """Fetch OLX through Chromium when direct HTTP is blocked by CloudFront."""
+        try:
+            from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+            from playwright.async_api import async_playwright
+
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+                try:
+                    context = await browser.new_context(
+                        locale="uk-UA",
+                        user_agent=(
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                        ),
+                    )
+                    page = await context.new_page()
+                    response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                    await page.wait_for_timeout(1_000)
+                    status = response.status if response is not None else 200
+                    if status in {404, 410}:
+                        return SourceResult(
+                            state=SourceState.UNAVAILABLE,
+                            error_code="listing_removed" if availability_only else "page_not_found",
+                            metadata={"confirmed": availability_only},
+                        )
+                    if status in {403, 429}:
+                        return SourceResult(
+                            state=SourceState.BLOCKED, error_code=f"source_browser_{status}"
+                        )
+                    body = await page.content()
+                    marker = body.casefold()
+                    if any(
+                        value in marker
+                        for value in ("captcha", "access denied", "verify you are human")
+                    ):
+                        return SourceResult(
+                            state=SourceState.BLOCKED, error_code="source_browser_challenge"
+                        )
+                    if availability_only:
+                        return SourceResult(state=SourceState.COMPLETE)
+                    if len(body.encode()) > 5_000_000:
+                        return SourceResult(
+                            state=SourceState.PARTIAL, error_code="source_body_too_large"
+                        )
+                    return SourceResult(state=SourceState.COMPLETE, data=body)
+                finally:
+                    await browser.close()
+        except PlaywrightTimeoutError:
+            return SourceResult(state=SourceState.PARTIAL, error_code="source_browser_timeout")
+        except Exception as exc:
+            if exc.__class__.__name__ in {"Error", "TargetClosedError"}:
+                return SourceResult(
+                    state=SourceState.PARTIAL, error_code="source_browser_unavailable"
+                )
+            return SourceResult(state=SourceState.PARTIAL, error_code="source_browser_error")
+
+    async def _fetch_html_http(self, url: str, *, availability_only: bool = False) -> SourceResult:
         current = url
         own_client = self.client is None
         client = self.client or httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5))

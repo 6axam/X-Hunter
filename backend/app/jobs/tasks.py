@@ -58,7 +58,10 @@ async def _run_search(search_id: UUID) -> str:
             return "skipped"
         run = await RunService(
             db,
-            OlxSource(http_enabled=settings.source_http_enabled),
+            OlxSource(
+                http_enabled=settings.source_http_enabled,
+                browser_enabled=settings.source_browser_enabled,
+            ),
             max_pages=settings.scan_max_pages,
         ).start(search)
         return run.status
@@ -154,7 +157,7 @@ async def _check_availability() -> int:
                 .limit(50)
             )
         )
-        source = OlxSource(http_enabled=True)
+        source = OlxSource(http_enabled=True, browser_enabled=settings.source_browser_enabled)
         scanner = ScanService(db)
         for listing in listings:
             result = await source.check_availability(listing.canonical_url)
