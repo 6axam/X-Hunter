@@ -54,6 +54,15 @@ services:
     <<: *backend
     command: ["celery", "-A", "app.jobs.celery_app:celery_app", "beat", "--loglevel=INFO"]
 
+  portainer:
+    image: portainer/portainer-ce:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -88,3 +97,4 @@ volumes:
   export_data:
   caddy_data:
   caddy_config:
+  portainer_data:
