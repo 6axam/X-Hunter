@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -12,19 +13,30 @@ from app.models import Base
 
 
 @pytest_asyncio.fixture
-async def api_client() -> AsyncIterator[httpx.AsyncClient]:
+async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+    event.listen(
+        engine.sync_engine,
+        "connect",
+        lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"),
+    )
     sessions = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
+    async with sessions() as session:
+        yield session
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def api_client(db_session: AsyncSession) -> AsyncIterator[httpx.AsyncClient]:
     async def test_db() -> AsyncIterator[AsyncSession]:
-        async with sessions() as session:
-            yield session
+        yield db_session
 
     def test_settings() -> Settings:
         return Settings(
@@ -41,4 +53,3 @@ async def api_client() -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
     app.dependency_overrides.clear()
-    await engine.dispose()
