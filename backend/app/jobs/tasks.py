@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -10,7 +11,7 @@ from sqlalchemy import or_, select
 
 from app.ai.openrouter import OpenRouterClient
 from app.config import get_settings
-from app.database import session_factory
+from app.database import engine, session_factory
 from app.jobs.celery_app import celery_app
 from app.models import ExportJob, Listing, ListingVersion, Search, SearchMatch
 from app.models.base import utcnow
@@ -22,9 +23,26 @@ from app.services.scanning import ScanService
 from app.sources.olx import OlxSource
 
 
+def _run_task[Result](coroutine: Coroutine[None, None, Result]) -> Result:
+    """Run a Celery coroutine without leaking asyncpg connections into the next loop.
+
+    Celery tasks are synchronous entry points and each one uses ``asyncio.run``.  An asyncpg
+    connection kept by SQLAlchemy's global pool belongs to the loop that created it, so it cannot
+    safely be reused by the next task's new loop.  Dispose the pool before that loop closes.
+    """
+
+    async def runner() -> Result:
+        try:
+            return await coroutine
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(runner())
+
+
 @celery_app.task(name="app.jobs.tasks.schedule_due_searches")
 def schedule_due_searches() -> int:
-    return asyncio.run(_schedule_due_searches())
+    return _run_task(_schedule_due_searches())
 
 
 async def _schedule_due_searches() -> int:
@@ -47,7 +65,7 @@ async def _schedule_due_searches() -> int:
 
 @celery_app.task(name="app.jobs.tasks.run_search")
 def run_search(search_id: str) -> str:
-    return asyncio.run(_run_search(UUID(search_id)))
+    return _run_task(_run_search(UUID(search_id)))
 
 
 async def _run_search(search_id: UUID) -> str:
@@ -69,7 +87,7 @@ async def _run_search(search_id: UUID) -> str:
 
 @celery_app.task(name="app.jobs.tasks.deliver_notifications")
 def deliver_notifications() -> int:
-    return asyncio.run(_deliver_notifications())
+    return _run_task(_deliver_notifications())
 
 
 async def _deliver_notifications() -> int:
@@ -82,7 +100,7 @@ async def _deliver_notifications() -> int:
 
 @celery_app.task(name="app.jobs.tasks.download_media")
 def download_media() -> int:
-    return asyncio.run(_download_media())
+    return _run_task(_download_media())
 
 
 async def _download_media() -> int:
@@ -93,7 +111,7 @@ async def _download_media() -> int:
 
 @celery_app.task(name="app.jobs.tasks.evaluate_ai")
 def evaluate_ai() -> int:
-    return asyncio.run(_evaluate_ai())
+    return _run_task(_evaluate_ai())
 
 
 async def _evaluate_ai() -> int:
@@ -134,7 +152,7 @@ async def _evaluate_ai() -> int:
 
 @celery_app.task(name="app.jobs.tasks.check_availability")
 def check_availability() -> int:
-    return asyncio.run(_check_availability())
+    return _run_task(_check_availability())
 
 
 async def _check_availability() -> int:
@@ -171,7 +189,7 @@ async def _check_availability() -> int:
 
 @celery_app.task(name="app.jobs.tasks.cleanup_exports")
 def cleanup_exports() -> int:
-    return asyncio.run(_cleanup_exports())
+    return _run_task(_cleanup_exports())
 
 
 async def _cleanup_exports() -> int:
