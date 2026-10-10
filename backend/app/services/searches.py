@@ -10,7 +10,7 @@ from app.api.errors import AppError
 from app.api.schemas import SearchDraftPatch, SearchPatchRequest
 from app.models import Search, SearchDraft, User
 from app.models.base import as_utc, utcnow
-from app.sources.olx import OlxPageType, OlxSource
+from app.sources.olx import OlxPageType, OlxSearchSpec, OlxSource
 
 
 class SearchService:
@@ -64,6 +64,13 @@ class SearchService:
     ) -> SearchDraft:
         draft = await self.get_draft(owner, draft_id)
         changes = patch.model_dump(exclude_unset=True)
+        if changes.get("parsed_spec") is not None and draft.page_type == OlxPageType.SEARCH.value:
+            merged = {**draft.parsed_spec, **changes["parsed_spec"]}
+            merged["original_url"] = draft.original_url
+            merged["opaque_query"] = draft.opaque_parameters
+            spec = OlxSearchSpec.model_validate(merged)
+            spec.current_url = self.source.build_search_url(spec)
+            changes["parsed_spec"] = spec.model_dump(mode="json")
         for field, value in changes.items():
             setattr(draft, field, value)
         await self.db.commit()

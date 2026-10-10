@@ -35,6 +35,12 @@ async def test_import_edit_create_and_revision_conflict(api_client: httpx.AsyncC
     assert edited.status_code == 200
     assert edited.json()["name"] == "Steam Deck до 12 000"
 
+    rebuilt = await api_client.patch(
+        f"/api/v1/search-drafts/{draft['id']}",
+        json={"parsed_spec": {**edited.json()["parsed_spec"], "price_to": "11000"}},
+    )
+    assert "filter_float_price%3Ato%5D=11000" in rebuilt.json()["parsed_spec"]["current_url"]
+
     created = await api_client.post(
         "/api/v1/searches",
         json={"draft_id": draft["id"], "active": True, "interval_minutes": 15},

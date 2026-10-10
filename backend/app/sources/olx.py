@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.api.errors import AppError
 from app.sources.base import ListingSource, SourceResult, SourceState
@@ -37,6 +37,13 @@ class OlxSearchSpec(BaseModel):
     seller_type: str | None = None
     order: str | None = None
     opaque_query: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_price_range(self) -> OlxSearchSpec:
+        if self.price_from is not None and self.price_to is not None:
+            if self.price_from > self.price_to:
+                raise ValueError("price_from must not exceed price_to")
+        return self
 
 
 class ParsedOlxUrl(BaseModel):

@@ -41,7 +41,13 @@ class FindingService:
             item = grouped.get(listing.id)
             if item is None:
                 cover = await self.db.scalar(
-                    select(Media).where(Media.listing_id == listing.id).order_by(Media.position)
+                    select(Media)
+                    .where(
+                        Media.listing_id == listing.id,
+                        Media.status == "ready",
+                        Media.safe_path.is_not(None),
+                    )
+                    .order_by(Media.position)
                 )
                 item = self._serialize(listing, version, match, state, cover)
                 grouped[listing.id] = item
