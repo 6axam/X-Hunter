@@ -38,6 +38,22 @@ def test_telegram_init_data_rejects_tampering() -> None:
     assert invalid.value.code == "invalid_init_data"
 
 
+def test_telegram_init_data_includes_signature_in_hmac_payload() -> None:
+    bot_token = "123:token"
+    values = {
+        "auth_date": "1000000",
+        "query_id": "AAE-test",
+        "signature": "telegram-ed25519-signature",
+        "user": json.dumps({"id": 111, "first_name": "Owner"}, separators=(",", ":")),
+    }
+    check = "\n".join(f"{key}={values[key]}" for key in sorted(values))
+    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    values["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+
+    identity = validate_telegram_init_data(urlencode(values), bot_token, now=1_000_001)
+    assert identity.telegram_id == 111
+
+
 def test_session_codec_rejects_modified_cookie() -> None:
     codec = SessionCodec("a" * 32)
     token, csrf = codec.create(111)

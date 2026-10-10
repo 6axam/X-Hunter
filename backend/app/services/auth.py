@@ -28,7 +28,6 @@ def validate_telegram_init_data(
 ) -> TelegramIdentity:
     pairs = dict(parse_qsl(raw, keep_blank_values=True, strict_parsing=True))
     received_hash = pairs.pop("hash", None)
-    pairs.pop("signature", None)
     if not received_hash:
         raise AppError(
             status_code=401,
