@@ -30,6 +30,46 @@ def test_listing_parser_keeps_full_description_and_images() -> None:
     assert item.image_urls == ["https://img.example/deck-1.jpg"]
 
 
+def test_current_olx_search_markup_keeps_card_data() -> None:
+    items = parse_search_html((FIXTURES / "olx_current_search_page.html").read_text())
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.source_listing_id == "ID10UbVN"
+    assert item.title == 'Електровелосипед 29" 800W'
+    assert item.price == Decimal("12000")
+    assert item.city == "Київ, Дніпровський"
+    assert item.condition == "Вживане"
+    assert item.image_urls == ["https://ireland.apollo.olxcdn.com/v1/files/cover/image;s=216x152"]
+
+
+def test_current_olx_listing_markup_keeps_details_for_filters_ai_and_media() -> None:
+    item = parse_listing_html(
+        (FIXTURES / "olx_current_listing_page.html").read_text(),
+        "https://www.olx.ua/d/uk/obyavlenie/elektrovelosiped-ID10UbVN.html",
+    )
+
+    assert item.title == 'Електровелосипед 29" 800W'
+    assert item.description == "Повністю справний. Зарядне у комплекті."
+    assert item.price == Decimal("12000")
+    assert item.currency == "UAH"
+    assert item.city == "Київ, Дніпровський"
+    assert item.condition == "Вживане"
+    assert item.attributes == {
+        "seller_type": "Приватна особа",
+        "Бренд": "Інший",
+        "Номінальна потужність": "800 Вт",
+        "seller_name": "Жанна",
+        "seller_profile_url": "https://www.olx.ua/uk/list/user/4qaC/",
+        "seller_rating": "5.0 / 5",
+        "seller_member_since": "на OLX з березень 2008 р.",
+        "seller_last_seen": "Онлайн 05 жовтня 2026 р.",
+    }
+    assert item.published_at is not None
+    assert item.published_at.isoformat() == "2026-09-19T00:00:00+00:00"
+    assert len(item.image_urls) == 2
+
+
 def test_strict_filter_reads_description_without_semantic_negation() -> None:
     item = parse_listing_html(
         (FIXTURES / "listing_page.html").read_text(),
