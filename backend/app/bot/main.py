@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import urlparse
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
@@ -16,8 +17,15 @@ from app.sources.olx import OlxSource
 router = Router()
 
 
-def app_keyboard() -> InlineKeyboardMarkup:
+def app_url() -> str:
+    return get_settings().public_base_url.rstrip("/")
+
+
+def app_keyboard() -> InlineKeyboardMarkup | None:
     settings = get_settings()
+    parsed = urlparse(settings.public_base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return None
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -40,21 +48,28 @@ async def open_app(message: Message) -> None:
     if not is_owner(message):
         await message.answer("Доступ к этому боту закрыт.")
         return
-    await message.answer(
-        "OLX Hunter следит за вашими поисками и показывает новые совпадения.",
-        reply_markup=app_keyboard(),
-    )
+    keyboard = app_keyboard()
+    text = "OLX Hunter следит за вашими поисками и показывает новые совпадения."
+    if keyboard is None:
+        text += (
+            "\n\nЛокальный интерфейс доступен по адресу "
+            f"{app_url()}, но Telegram Mini App требует публичный HTTPS-адрес."
+        )
+    await message.answer(text, reply_markup=keyboard)
 
 
 @router.message(Command("help"))
 async def help_message(message: Message) -> None:
     if not is_owner(message):
         return
-    await message.answer(
+    keyboard = app_keyboard()
+    text = (
         "Отправьте ссылку на выдачу OLX, чтобы создать черновик. "
-        "Настройка фильтров и управление поисками доступны в приложении.",
-        reply_markup=app_keyboard(),
+        "Настройка фильтров и управление поисками доступны в приложении."
     )
+    if keyboard is None:
+        text += f"\n\nЛокальный интерфейс: {app_url()}"
+    await message.answer(text, reply_markup=keyboard)
 
 
 @router.message(F.text.regexp(r"https?://(?:www\.)?olx\.ua/"))
@@ -72,17 +87,22 @@ async def import_link(message: Message) -> None:
         draft = await SearchService(
             db, OlxSource(http_enabled=settings.source_http_enabled)
         ).import_url(owner, message.text.strip())
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Настроить поиск",
-                    web_app=WebAppInfo(url=f"{settings.public_base_url}/searches?draft={draft.id}"),
-                )
+    keyboard = None
+    if app_keyboard() is not None:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Настроить поиск",
+                        web_app=WebAppInfo(url=f"{app_url()}/searches?draft={draft.id}"),
+                    )
+                ]
             ]
-        ]
-    )
-    await message.answer(f"Распознал: {draft.name}", reply_markup=keyboard)
+        )
+    text = f"Распознал: {draft.name}"
+    if keyboard is None:
+        text += f"\n\nЛокальный интерфейс: {app_url()}/searches?draft={draft.id}"
+    await message.answer(text, reply_markup=keyboard)
 
 
 async def main() -> None:
