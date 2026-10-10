@@ -128,7 +128,7 @@ def _image_urls(node: Node) -> list[str]:
 def _city_from_location(value: str | None) -> str | None:
     if not value:
         return None
-    city = _LOCATION_DATE_PATTERN.sub("", value).strip()
+    city = _LOCATION_DATE_PATTERN.sub("", value).strip(" ,")
     return city or None
 
 

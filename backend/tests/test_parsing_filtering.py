@@ -43,6 +43,15 @@ def test_current_olx_search_markup_keeps_card_data() -> None:
     assert item.image_urls == ["https://ireland.apollo.olxcdn.com/v1/files/cover/image;s=216x152"]
 
 
+def test_city_parser_removes_location_date_and_trailing_separator() -> None:
+    items = parse_search_html(
+        """<div data-testid='l-card'>
+        <a data-testid='card-title-link' href='/d/IDcity1'><h4>Велосипед</h4></a>
+        <p data-testid='location-date'>Полтава, - 19 вересня 2026 р.</p></div>"""
+    )
+    assert items[0].city == "Полтава"
+
+
 def test_current_olx_listing_markup_keeps_details_for_filters_ai_and_media() -> None:
     item = parse_listing_html(
         (FIXTURES / "olx_current_listing_page.html").read_text(),
