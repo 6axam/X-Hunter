@@ -50,6 +50,7 @@ async def test_import_edit_create_and_revision_conflict(api_client: httpx.AsyncC
     assert search["active"] is True
     assert search["revision"] == 1
     assert search["next_run_at"] is not None
+    assert search["event_settings"]["price_drop_enabled"] is False
 
     changed = await api_client.patch(
         f"/api/v1/searches/{search['id']}",
@@ -57,6 +58,16 @@ async def test_import_edit_create_and_revision_conflict(api_client: httpx.AsyncC
     )
     assert changed.status_code == 200
     assert changed.json()["revision"] == 2
+
+    discount = await api_client.patch(
+        f"/api/v1/searches/{search['id']}",
+        json={
+            "expected_revision": 2,
+            "event_settings": {"price_drop_enabled": True, "price_drop_percent": 5},
+        },
+    )
+    assert discount.status_code == 200
+    assert discount.json()["event_settings"]["price_drop_enabled"] is True
 
     stale = await api_client.patch(
         f"/api/v1/searches/{search['id']}",

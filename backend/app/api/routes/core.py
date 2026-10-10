@@ -166,7 +166,11 @@ async def start_scan(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ScanRunResponse:
     search = await searches.get_search(user, search_id)
-    run = await RunService(db, OlxSource(http_enabled=settings.source_http_enabled)).start(search)
+    run = await RunService(
+        db,
+        OlxSource(http_enabled=settings.source_http_enabled),
+        max_pages=settings.scan_max_pages,
+    ).start(search)
     return ScanRunResponse.model_validate(run)
 
 

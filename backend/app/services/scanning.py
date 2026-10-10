@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from decimal import Decimal
 from hashlib import sha256
+from pathlib import Path
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -140,12 +143,14 @@ class ScanService:
         threshold = int(search.event_settings.get("price_drop_percent", 5))
         if (
             decision.decision == "match"
+            and search.event_settings.get("price_drop_enabled", False)
             and previous_version is not None
             and previous_version.price is not None
             and candidate.price is not None
             and candidate.price < previous_version.price
         ):
-            percent = int((previous_version.price - candidate.price) * 100 / previous_version.price)
+            reference = await self._notified_price(search, listing) or previous_version.price
+            percent = int((reference - candidate.price) * 100 / reference)
             if percent >= threshold:
                 await self._event(
                     search,
@@ -153,10 +158,25 @@ class ScanService:
                     "price_drop",
                     f"price:{search.owner_id}:{listing.id}:{candidate.price}",
                     candidate,
-                    {"previous_price": str(previous_version.price), "drop_percent": percent},
+                    {"previous_price": str(reference), "drop_percent": percent},
                 )
         await self.db.commit()
         return match, is_new_listing
+
+    async def _notified_price(self, search: Search, listing: Listing) -> Decimal | None:
+        event = await self.db.scalar(
+            select(NotificationEvent)
+            .where(
+                NotificationEvent.owner_id == search.owner_id,
+                NotificationEvent.listing_id == listing.id,
+                NotificationEvent.status == "sent",
+                NotificationEvent.event_type.in_(["new_listing", "price_drop"]),
+            )
+            .order_by(NotificationEvent.created_at.desc())
+        )
+        if not event or event.payload.get("price") is None:
+            return None
+        return Decimal(str(event.payload["price"]))
 
     async def complete_baseline(self, search: Search) -> None:
         if search.baseline_completed_at is None:
@@ -211,6 +231,16 @@ class ScanService:
         if listing.unavailable_checks < 2:
             await self.db.commit()
             return False
+        paths = list(
+            await self.db.scalars(
+                select(Media.safe_path).where(
+                    Media.listing_id == listing.id,
+                    Media.safe_path.is_not(None),
+                )
+            )
+        )
         await self.db.execute(delete(Listing).where(Listing.id == listing.id))
         await self.db.commit()
+        for path in paths:
+            await asyncio.to_thread(Path(path).unlink, missing_ok=True)
         return True

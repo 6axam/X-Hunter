@@ -29,12 +29,16 @@ export function SearchesPage() {
       const name = (document.querySelector<HTMLInputElement>("#draft-name")?.value ?? draft.name).trim();
       const max = document.querySelector<HTMLInputElement>("#draft-price")?.value;
       const required = document.querySelector<HTMLInputElement>("#draft-required")?.value ?? "";
+      const excluded = document.querySelector<HTMLInputElement>("#draft-excluded")?.value ?? "";
+      const aiModel = document.querySelector<HTMLInputElement>("#draft-ai-model")?.value.trim() ?? "";
+      const aiInstruction = document.querySelector<HTMLTextAreaElement>("#draft-ai-instruction")?.value.trim() ?? "";
       const parsed = { ...draft.parsed_spec, price_to: max || null };
       const rules = {
         required_groups: required.trim() ? [{ values: required.split(",").map((x) => x.trim()), scope: "both" }] : [],
-        excluded: [],
+        excluded: excluded.trim() ? excluded.split(",").map((value) => ({ value: value.trim(), scope: "both" })) : [],
       };
-      const saved = await api.patchDraft(draft.id, { name, parsed_spec: parsed, rules });
+      const ai_settings = { enabled: Boolean(aiModel && aiInstruction), model: aiModel || null, instruction: aiInstruction, daily_budget_usd: "0.10" };
+      const saved = await api.patchDraft(draft.id, { name, parsed_spec: parsed, rules, ai_settings });
       return api.createSearch(saved.id);
     },
     onSuccess: () => {
@@ -77,6 +81,8 @@ export function SearchesPage() {
                 <label>Название<input id="draft-name" defaultValue={draft.name} /></label>
                 <div className="field-row"><label>Цена до, грн<input id="draft-price" inputMode="decimal" defaultValue={String(draft.parsed_spec.price_to ?? "")} /></label><label>Интервал<input disabled value="15 минут" /></label></div>
                 <label>Нужные слова, через запятую<input id="draft-required" placeholder="steam deck, стим дек" /></label>
+                <label>Запрещённые слова, через запятую<input id="draft-excluded" placeholder="чехол, запчасти" /></label>
+                <details className="form-details"><summary>ИИ-анализ через OpenRouter</summary><div className="form-stack"><label>Model ID<input id="draft-ai-model" placeholder="provider/model" /></label><label>Что считать выгодным<textarea id="draft-ai-instruction" placeholder="Например: полный комплект, без ремонта, хорошая цена для моего бюджета" /></label><p>ИИ включится только если заданы модель и инструкция. Лимит поиска — $0.10 в сутки.</p></div></details>
                 <div className="callout"><Radar size={19} /><span>Первый запуск наполнит ленту без сообщений по старым объявлениям.</span></div>
                 {creator.error && <ErrorBlock error={creator.error} />}
                 <Button onClick={() => creator.mutate()} disabled={creator.isPending}>{creator.isPending ? "Сохраняю…" : "Сохранить и запустить"}<Play size={17} /></Button>
@@ -93,14 +99,14 @@ function SearchCard({ search, onNotice }: { search: Search; onNotice: (value: st
   const client = useQueryClient();
   const toggle = useMutation({ mutationFn: () => api.patchSearch(search, { active: !search.active }), onSuccess: () => void client.invalidateQueries({ queryKey: ["searches"] }) });
   const scan = useMutation({ mutationFn: () => api.scan(search.id), onSuccess: (run) => onNotice(run.status === "not_configured" ? t.sourceOff : `Проверка: ${run.status}`) });
+  const discounts = useMutation({ mutationFn: () => api.patchSearch(search, { event_settings: { ...search.event_settings, price_drop_enabled: !search.event_settings.price_drop_enabled, price_drop_percent: search.event_settings.price_drop_percent ?? 5 } }), onSuccess: () => void client.invalidateQueries({ queryKey: ["searches"] }) });
   const price = search.specification.price_to ? `до ${search.specification.price_to} грн` : "любая цена";
   return <Card className="search-card">
     <div className="search-card__top"><div className="search-card__icon"><Radar size={21} /></div><button role="switch" aria-checked={search.active} className={`switch ${search.active ? "switch--on" : ""}`} onClick={() => toggle.mutate()}><span /></button></div>
     <div><h2>{search.name}</h2><p>{String(price)} · каждые {search.interval_minutes} мин</p></div>
-    <div className="search-card__footer"><Pill tone={search.active ? "green" : "neutral"}>{search.active ? "Активен" : "На паузе"}</Pill><Button className="button--ghost" onClick={() => scan.mutate()} disabled={scan.isPending}>{scan.isPending ? <CirclePause size={17} /> : <Play size={17} />}Проверить</Button></div>
+    <div className="search-card__footer"><button className="text-action" onClick={() => discounts.mutate()}>Скидки {search.event_settings.price_drop_enabled ? "вкл" : "выкл"}</button><Button className="button--ghost" onClick={() => scan.mutate()} disabled={scan.isPending}>{scan.isPending ? <CirclePause size={17} /> : <Play size={17} />}Проверить</Button></div>
   </Card>;
 }
 
 function EmptySearches({ onAdd }: { onAdd: () => void }) { return <Card className="empty-state"><div className="empty-state__icon"><Radar /></div><h2>Пока нет поисков</h2><p>{t.emptySearches}</p><Button onClick={onAdd}><Plus size={18} />{t.addSearch}</Button></Card>; }
 function ErrorBlock({ error }: { error: unknown }) { return <div className="error-block">{error instanceof ApiError ? error.message : "Не удалось загрузить данные."}</div>; }
-

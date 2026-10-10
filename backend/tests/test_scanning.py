@@ -1,3 +1,4 @@
+import asyncio
 from decimal import Decimal
 
 import pytest
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
     Listing,
     ListingVersion,
+    Media,
     NotificationEvent,
     Search,
     SearchMatch,
@@ -28,7 +30,7 @@ async def make_search(db: AsyncSession, owner: User, name: str = "Deck") -> Sear
         specification={"price_to": "25000"},
         rules={"required_groups": [{"values": ["steam deck"], "scope": "both"}]},
         ai_settings={"enabled": False},
-        event_settings={"price_drop_percent": 5},
+        event_settings={"price_drop_enabled": True, "price_drop_percent": 5},
         active=True,
         interval_minutes=15,
         next_run_at=utcnow(),
@@ -82,7 +84,9 @@ async def test_baseline_deduplication_and_price_drop(db_session: AsyncSession) -
 
 
 @pytest.mark.asyncio
-async def test_two_confirmed_unavailable_checks_delete_everything(db_session: AsyncSession) -> None:
+async def test_two_confirmed_unavailable_checks_delete_everything(
+    db_session: AsyncSession, tmp_path
+) -> None:
     owner = User(telegram_id=111)
     db_session.add(owner)
     await db_session.commit()
@@ -94,6 +98,12 @@ async def test_two_confirmed_unavailable_checks_delete_everything(db_session: As
     listing = await db_session.scalar(select(Listing))
     assert listing is not None
     db_session.add(UserListingState(owner_id=owner.id, listing_id=listing.id, saved=True))
+    media = await db_session.scalar(select(Media).where(Media.listing_id == listing.id))
+    assert media is not None
+    media_path = tmp_path / "stored.jpg"
+    await asyncio.to_thread(media_path.write_bytes, b"image")
+    media.safe_path = str(media_path)
+    media.status = "ready"
     await db_session.commit()
 
     assert await scanner.record_availability(listing, SourceState.BLOCKED, confirmed=False) is False
@@ -110,3 +120,4 @@ async def test_two_confirmed_unavailable_checks_delete_everything(db_session: As
     assert await db_session.scalar(select(func.count()).select_from(ListingVersion)) == 0
     assert await db_session.scalar(select(func.count()).select_from(SearchMatch)) == 0
     assert await db_session.scalar(select(func.count()).select_from(UserListingState)) == 0
+    assert media_path.exists() is False

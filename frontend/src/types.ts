@@ -4,6 +4,8 @@ export type Search = {
   current_url: string;
   specification: Record<string, unknown>;
   rules: Record<string, unknown>;
+  ai_settings: Record<string, unknown>;
+  event_settings: { price_drop_enabled?: boolean; price_drop_percent?: number };
   active: boolean;
   revision: number;
   interval_minutes: number;
@@ -18,6 +20,7 @@ export type Draft = {
   name: string;
   parsed_spec: Record<string, unknown>;
   rules: Record<string, unknown>;
+  ai_settings: Record<string, unknown>;
 };
 
 export type Finding = {

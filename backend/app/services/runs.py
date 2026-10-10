@@ -14,9 +14,10 @@ from app.sources.types import ListingCandidate
 
 
 class RunService:
-    def __init__(self, db: AsyncSession, source: ListingSource) -> None:
+    def __init__(self, db: AsyncSession, source: ListingSource, max_pages: int = 3) -> None:
         self.db = db
         self.source = source
+        self.max_pages = max(1, max_pages)
 
     async def start(self, search: Search) -> ScanRun:
         active = await self.db.scalar(
@@ -42,25 +43,43 @@ class RunService:
         await self.db.refresh(run)
 
         spec = OlxSearchSpec.model_validate(search.specification)
-        result = await self.source.fetch_search_page(spec, page=1)
-        if result.state not in {SourceState.COMPLETE, SourceState.PARTIAL}:
-            run.status = result.state.value
-            run.error_code = result.error_code
-            run.finished_at = utcnow()
-            await self.db.commit()
-            return run
+        candidates_by_id: dict[str, ListingCandidate] = {}
+        overall_state = SourceState.COMPLETE
+        for page in range(1, self.max_pages + 1):
+            result = await self.source.fetch_search_page(spec, page=page)
+            if result.state not in {SourceState.COMPLETE, SourceState.PARTIAL}:
+                if page == 1:
+                    run.status = result.state.value
+                    run.error_code = result.error_code
+                    run.finished_at = utcnow()
+                    await self.db.commit()
+                    return run
+                overall_state = SourceState.PARTIAL
+                run.error_code = result.error_code
+                break
+            page_candidates = [
+                ListingCandidate.model_validate(item) for item in (result.data or [])
+            ]
+            run.pages_checked += 1
+            for candidate in page_candidates:
+                candidates_by_id[candidate.source_listing_id] = candidate
+            if result.state is SourceState.PARTIAL:
+                overall_state = SourceState.PARTIAL
+                run.error_code = result.error_code
+                break
+            if not page_candidates:
+                break
 
         scanner = ScanService(self.db)
-        candidates = [ListingCandidate.model_validate(item) for item in (result.data or [])]
+        candidates = list(candidates_by_id.values())
         for candidate in candidates:
             details = await self.source.fetch_listing(candidate.canonical_url)
             if details.state is SourceState.COMPLETE and details.data:
                 candidate = ListingCandidate.model_validate(details.data)
             await scanner.ingest(search, candidate)
-        if result.state is SourceState.COMPLETE:
+        if overall_state is SourceState.COMPLETE:
             await scanner.complete_baseline(search)
-        run.status = "succeeded" if result.state is SourceState.COMPLETE else "partial"
-        run.pages_checked = int(result.metadata.get("pages_checked", 1))
+        run.status = "succeeded" if overall_state is SourceState.COMPLETE else "partial"
         run.items_seen = len(candidates)
         run.counters = {"ingested": len(candidates)}
         run.finished_at = utcnow()

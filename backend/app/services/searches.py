@@ -107,7 +107,7 @@ class SearchService:
             opaque_parameters=draft.opaque_parameters,
             rules=draft.rules,
             ai_settings=draft.ai_settings,
-            event_settings={"price_drop_percent": 5},
+            event_settings={"price_drop_enabled": False, "price_drop_percent": 5},
             active=active,
             interval_minutes=interval_minutes,
             next_run_at=utcnow() if active else None,
@@ -141,7 +141,7 @@ class SearchService:
                 message="Настройки поиска уже изменились. Обновите данные и повторите действие.",
             )
         changes = patch.model_dump(exclude_unset=True, exclude={"expected_revision"})
-        semantic_fields = {"rules", "ai_settings", "interval_minutes"}
+        semantic_fields = {"rules", "ai_settings", "event_settings", "interval_minutes"}
         for field, value in changes.items():
             setattr(search, field, value)
         if semantic_fields.intersection(changes):

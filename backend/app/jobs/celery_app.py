@@ -26,6 +26,14 @@ celery_app.conf.update(
             "task": "app.jobs.tasks.evaluate_ai",
             "schedule": 30.0,
         },
+        "check-availability": {
+            "task": "app.jobs.tasks.check_availability",
+            "schedule": 3600.0,
+        },
+        "cleanup-exports": {
+            "task": "app.jobs.tasks.cleanup_exports",
+            "schedule": 3600.0,
+        },
     },
     imports=("app.jobs.tasks",),
 )

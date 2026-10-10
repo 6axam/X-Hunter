@@ -76,20 +76,60 @@ class FindingService:
         return list(grouped.values())
 
     async def get(self, owner: User, listing_id: UUID) -> dict:
-        items = await self.list(owner, saved=None, status="all")
-        for item in items:
-            if item["id"] == str(listing_id):
-                media = list(
-                    await self.db.scalars(
-                        select(Media).where(Media.listing_id == listing_id).order_by(Media.position)
-                    )
-                )
-                item["media"] = [
-                    {"id": str(entry.id), "status": entry.status, "position": entry.position}
-                    for entry in media
-                ]
-                return item
-        raise AppError(status_code=404, code="finding_not_found", message="Находка не найдена.")
+        rows = (
+            await self.db.execute(
+                select(SearchMatch, Search, Listing, ListingVersion)
+                .join(Search, Search.id == SearchMatch.search_id)
+                .join(Listing, Listing.id == SearchMatch.listing_id)
+                .join(ListingVersion, ListingVersion.id == SearchMatch.listing_version_id)
+                .where(Search.owner_id == owner.id, Listing.id == listing_id)
+            )
+        ).all()
+        if not rows:
+            raise AppError(
+                status_code=404,
+                code="finding_not_found",
+                message="Находка не найдена.",
+            )
+        match, _, listing, version = rows[0]
+        state = await self.db.scalar(
+            select(UserListingState).where(
+                UserListingState.owner_id == owner.id,
+                UserListingState.listing_id == listing.id,
+            )
+        )
+        cover = await self.db.scalar(
+            select(Media)
+            .where(
+                Media.listing_id == listing.id,
+                Media.status == "ready",
+                Media.safe_path.is_not(None),
+            )
+            .order_by(Media.position)
+        )
+        item = self._serialize(listing, version, match, state, cover)
+        evaluation = await self.db.scalar(
+            select(AiEvaluation)
+            .where(
+                AiEvaluation.listing_id == listing.id,
+                AiEvaluation.status == "complete",
+            )
+            .order_by(AiEvaluation.created_at.desc())
+        )
+        if evaluation:
+            item["ai_value_label"] = evaluation.value_label
+            item["ai_summary"] = evaluation.result.get("summary")
+        item["searches"] = [{"id": str(search.id), "name": search.name} for _, search, _, _ in rows]
+        media = list(
+            await self.db.scalars(
+                select(Media).where(Media.listing_id == listing_id).order_by(Media.position)
+            )
+        )
+        item["media"] = [
+            {"id": str(entry.id), "status": entry.status, "position": entry.position}
+            for entry in media
+        ]
+        return item
 
     async def patch_state(self, owner: User, listing_id: UUID, changes: dict) -> dict:
         await self.get(owner, listing_id)

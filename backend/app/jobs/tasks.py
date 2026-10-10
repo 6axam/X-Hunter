@@ -2,21 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from pathlib import Path
 from uuid import UUID
 
 from aiogram import Bot
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.ai.openrouter import OpenRouterClient
 from app.config import get_settings
 from app.database import session_factory
 from app.jobs.celery_app import celery_app
-from app.models import ListingVersion, Search, SearchMatch
+from app.models import ExportJob, Listing, ListingVersion, Search, SearchMatch
 from app.models.base import utcnow
 from app.notifications.telegram import TelegramOutbox
 from app.services.ai import AiService
 from app.services.media import process_pending_media
 from app.services.runs import RunService
+from app.services.scanning import ScanService
 from app.sources.olx import OlxSource
 
 
@@ -54,9 +56,11 @@ async def _run_search(search_id: UUID) -> str:
         search = await db.get(Search, search_id)
         if search is None or not search.active:
             return "skipped"
-        run = await RunService(db, OlxSource(http_enabled=settings.source_http_enabled)).start(
-            search
-        )
+        run = await RunService(
+            db,
+            OlxSource(http_enabled=settings.source_http_enabled),
+            max_pages=settings.scan_max_pages,
+        ).start(search)
         return run.status
 
 
@@ -123,3 +127,63 @@ async def _evaluate_ai() -> int:
                     continue
                 completed += 1
     return completed
+
+
+@celery_app.task(name="app.jobs.tasks.check_availability")
+def check_availability() -> int:
+    return asyncio.run(_check_availability())
+
+
+async def _check_availability() -> int:
+    settings = get_settings()
+    if not settings.source_http_enabled:
+        return 0
+    now = utcnow()
+    async with session_factory() as db:
+        listings = list(
+            await db.scalars(
+                select(Listing)
+                .where(
+                    or_(
+                        (Listing.unavailable_checks == 0)
+                        & (Listing.last_seen_at <= now - timedelta(days=1)),
+                        (Listing.unavailable_checks == 1)
+                        & (Listing.updated_at <= now - timedelta(hours=6)),
+                    )
+                )
+                .limit(50)
+            )
+        )
+        source = OlxSource(http_enabled=True)
+        scanner = ScanService(db)
+        for listing in listings:
+            result = await source.check_availability(listing.canonical_url)
+            await scanner.record_availability(
+                listing,
+                result.state,
+                confirmed=bool(result.metadata.get("confirmed")),
+            )
+        return len(listings)
+
+
+@celery_app.task(name="app.jobs.tasks.cleanup_exports")
+def cleanup_exports() -> int:
+    return asyncio.run(_cleanup_exports())
+
+
+async def _cleanup_exports() -> int:
+    async with session_factory() as db:
+        jobs = list(
+            await db.scalars(
+                select(ExportJob).where(
+                    ExportJob.expires_at.is_not(None),
+                    ExportJob.expires_at <= utcnow(),
+                )
+            )
+        )
+        for job in jobs:
+            if job.safe_path:
+                await asyncio.to_thread(Path(job.safe_path).unlink, missing_ok=True)
+            await db.delete(job)
+        await db.commit()
+        return len(jobs)

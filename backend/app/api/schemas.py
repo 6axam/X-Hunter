@@ -54,6 +54,7 @@ class SearchPatchRequest(BaseModel):
     interval_minutes: int | None = Field(default=None, ge=10, le=10080)
     rules: dict[str, Any] | None = None
     ai_settings: dict[str, Any] | None = None
+    event_settings: dict[str, Any] | None = None
 
 
 class SearchResponse(BaseModel):

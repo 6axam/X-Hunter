@@ -46,6 +46,18 @@ async def test_findings_feed_and_saved_state(
     saved = await api_client.get("/api/v1/findings?saved=true")
     assert len(saved.json()) == 1
 
+    hidden = await api_client.patch(
+        f"/api/v1/findings/{finding['id']}/state", json={"hidden": True}
+    )
+    assert hidden.status_code == 200
+    assert (await api_client.get("/api/v1/findings")).json() == []
+    detail = await api_client.get(f"/api/v1/findings/{finding['id']}")
+    assert detail.status_code == 200 and detail.json()["hidden"] is True
+    restored = await api_client.patch(
+        f"/api/v1/findings/{finding['id']}/state", json={"hidden": False}
+    )
+    assert restored.status_code == 200
+
 
 @pytest.mark.asyncio
 async def test_manual_scan_reports_source_not_configured(api_client: httpx.AsyncClient) -> None:
