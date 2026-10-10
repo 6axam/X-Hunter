@@ -30,6 +30,9 @@ export type Finding = {
   price: string | null;
   currency: string | null;
   city: string | null;
+  condition: string | null;
+  attributes: Record<string, string>;
+  published_at: string | null;
   canonical_url: string;
   decision: "match" | "reject" | "uncertain";
   reasons: Array<Record<string, unknown>>;
@@ -41,6 +44,7 @@ export type Finding = {
   ai_value_label: string | null;
   ai_summary: string | null;
   searches: Array<{ id: string; name: string }>;
+  media?: Array<{ id: string; status: string; position: number }>;
 };
 
 export type Me = {

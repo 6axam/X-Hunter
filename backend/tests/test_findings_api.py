@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import httpx
@@ -28,6 +29,10 @@ async def test_findings_feed_and_saved_state(
             description="Полный комплект",
             price=Decimal("19000"),
             currency="UAH",
+            city="Київ",
+            condition="Вживане",
+            attributes={"Бренд": "Valve", "seller_name": "Олексій"},
+            published_at=datetime(2026, 10, 1, tzinfo=UTC),
         ),
     )
 
@@ -36,6 +41,9 @@ async def test_findings_feed_and_saved_state(
     finding = feed.json()[0]
     assert finding["title"] == "Steam Deck OLED"
     assert finding["saved"] is False
+    assert finding["condition"] == "Вживане"
+    assert finding["attributes"] == {"Бренд": "Valve", "seller_name": "Олексій"}
+    assert finding["published_at"].startswith("2026-10-01T00:00:00")
 
     changed = await api_client.patch(
         f"/api/v1/findings/{finding['id']}/state", json={"saved": True, "seen": True}

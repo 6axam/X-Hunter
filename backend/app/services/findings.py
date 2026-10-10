@@ -162,6 +162,8 @@ class FindingService:
             "currency": version.currency,
             "city": version.city,
             "condition": version.condition,
+            "attributes": version.attributes,
+            "published_at": version.published_at,
             "canonical_url": listing.canonical_url,
             "decision": match.decision,
             "reasons": match.reasons,

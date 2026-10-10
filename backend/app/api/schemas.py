@@ -105,6 +105,8 @@ class FindingResponse(BaseModel):
     currency: str | None
     city: str | None
     condition: str | None
+    attributes: dict[str, str]
+    published_at: datetime | None
     canonical_url: str
     decision: str
     reasons: list[dict[str, Any]]
