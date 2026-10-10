@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi import Request
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 
@@ -33,7 +33,7 @@ class AppError(Exception):
         self.retry_after = retry_after
 
 
-async def app_error_handler(request: Request, exc: AppError) -> ORJSONResponse:
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     request_id = getattr(request.state, "request_id", str(uuid4()))
     payload = ApiError(
         code=exc.code,
@@ -45,4 +45,4 @@ async def app_error_handler(request: Request, exc: AppError) -> ORJSONResponse:
     headers = {"X-Request-ID": request_id}
     if exc.retry_after is not None:
         headers["Retry-After"] = str(exc.retry_after)
-    return ORJSONResponse(payload.model_dump(), status_code=exc.status_code, headers=headers)
+    return JSONResponse(payload.model_dump(), status_code=exc.status_code, headers=headers)
