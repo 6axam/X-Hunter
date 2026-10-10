@@ -11,6 +11,15 @@ class SearchImportRequest(BaseModel):
     url: str = Field(min_length=10, max_length=4096)
 
 
+class TelegramAuthRequest(BaseModel):
+    init_data: str = Field(min_length=20, max_length=16384)
+
+
+class TelegramAuthResponse(BaseModel):
+    csrf_token: str
+    expires_in: int
+
+
 class SearchDraftPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     parsed_spec: dict[str, Any] | None = None

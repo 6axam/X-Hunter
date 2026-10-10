@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     dev_auth_enabled: bool = False
     session_secret: str = "development-only-change-me"
+    session_max_age_seconds: int = 3600
+    telegram_init_data_max_age_seconds: int = 600
     database_url: str = "sqlite+aiosqlite:///./olx_hunter.sqlite3"
     redis_url: str = "redis://localhost:6379/0"
     media_root: Path = Path("./media")

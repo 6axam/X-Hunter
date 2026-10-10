@@ -9,7 +9,6 @@ from typing import Any
 from app.sources.types import ListingCandidate
 
 ACCESSORY_WORDS = {"чехол", "кабель", "зарядка", "стекло", "запчасти", "аксессуар"}
-NEGATIONS = {"не", "без", "никогда"}
 
 
 def normalize(value: str | None) -> str:
@@ -23,13 +22,6 @@ def _scoped_text(candidate: ListingCandidate, scope: str) -> str:
     if scope == "description":
         return normalize(candidate.description)
     return normalize(f"{candidate.title} {candidate.description or ''}")
-
-
-def _negated(text: str, phrase: str) -> bool:
-    index = text.find(phrase)
-    if index < 0:
-        return False
-    return any(word in NEGATIONS for word in text[:index].split()[-3:])
 
 
 @dataclass(frozen=True)
@@ -64,7 +56,7 @@ def evaluate(candidate: ListingCandidate, specification: dict, rules: dict) -> F
     for rule in rules.get("excluded", []):
         phrase = normalize(rule.get("value"))
         text = _scoped_text(candidate, rule.get("scope", "both"))
-        if phrase and phrase in text and not _negated(text, phrase):
+        if phrase and phrase in text:
             return FilterDecision("rejected", [{"code": "excluded_phrase", "value": phrase}])
 
     if rules.get("reject_accessories"):

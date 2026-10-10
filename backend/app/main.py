@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import AppError, app_error_handler
+from app.api.routes.auth import router as auth_router
 from app.api.routes.core import router as core_router
 from app.api.routes.health import router as health_router
 from app.config import get_settings
@@ -42,4 +43,5 @@ async def request_context(request: Request, call_next):
 
 
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(core_router, prefix="/api/v1")

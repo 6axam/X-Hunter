@@ -25,7 +25,7 @@ def test_listing_parser_keeps_full_description_and_images() -> None:
     assert item.image_urls == ["https://img.example/deck-1.jpg"]
 
 
-def test_filter_reads_description_and_understands_simple_negation() -> None:
+def test_strict_filter_reads_description_without_semantic_negation() -> None:
     item = parse_listing_html(
         (FIXTURES / "listing_page.html").read_text(),
         "https://www.olx.ua/d/uk/obyavlenie/steam-deck-IDdeck1.html",
@@ -38,7 +38,8 @@ def test_filter_reads_description_and_understands_simple_negation() -> None:
             "excluded": [{"value": "ремонт", "scope": "description"}],
         },
     )
-    assert decision.decision == "accepted"
+    assert decision.decision == "rejected"
+    assert decision.reasons[0]["code"] == "excluded_phrase"
 
 
 def test_filter_rejects_accessory_only_title() -> None:
