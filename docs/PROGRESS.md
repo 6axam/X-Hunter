@@ -35,13 +35,16 @@
 - Добавлены Celery worker/beat задачи для планирования due-поисков, запуска scan и доставки pending-уведомлений.
 - Добавлен безопасный media pipeline: HTTPS/CDN allowlist, DNS/IP-проверка против SSRF, ручная проверка redirect, лимиты bytes/pixels, Pillow decode и генерируемые checksum-пути.
 - Изображения загружаются только для подходящих объявлений, выдаются через owner-protected API и обрабатываются отдельной Celery-задачей.
+- Добавлен OpenRouter-клиент по актуальному API: каталог совместимых моделей, strict JSON Schema, `require_parameters`, отключённый fallback и проверка доказательных цитат.
+- Реализованы дневной бюджетный резерв до ИИ-вызова, учёт фактической/неопределённой стоимости, кэш оценки и отображение value label/summary в ленте.
+- Добавлены versioned owner settings, usage API и CSV/JSON-экспорт на 24 часа; CSV защищён от formula injection.
 
 ## Проверено
 
 - `PROJECT_PLAN.md` прочитан полностью, основной контракт реализации находится в разделе 22.
 - В текущем каталоге и доступных каталогах пользователя отсутствует `OLX_HUNTER_UI_PROMPT.md`.
 - `ruff check` и форматирование backend проходят.
-- `pytest`: 28 тестов проходят, включая URL round trip, полный текст описания, рекламу/дедупликацию, baseline, скидку, очистку, подпись Telegram, API находок, outbox и проверку медиа.
+- `pytest`: 34 теста проходят, включая URL round trip, описание, рекламу/дедупликацию, baseline, скидку, очистку, Telegram, outbox, медиа, ИИ-бюджет/схему и экспорт.
 - Первая миграция проверена полным циклом `upgrade head` и `downgrade base` на чистой SQLite-базе.
 - Frontend: `npm run typecheck`, 2 Vitest-теста и production build проходят; desktop empty-state визуально проверен во встроенном браузере.
 
@@ -53,4 +56,4 @@
 
 ## Следующий конкретный шаг
 
-Добавить OpenRouter-клиент с бюджетным резервом и export API; затем Compose/Caddy, backup/restore и итоговую сквозную проверку.
+Добавить Compose/Caddy, контейнеры всех сервисов, backup/restore и health/readiness; затем итоговую сквозную проверку и документацию реального запуска.

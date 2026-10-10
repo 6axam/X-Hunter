@@ -6,7 +6,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import AppError
-from app.models import Listing, ListingVersion, Media, Search, SearchMatch, User, UserListingState
+from app.models import (
+    AiEvaluation,
+    Listing,
+    ListingVersion,
+    Media,
+    Search,
+    SearchMatch,
+    User,
+    UserListingState,
+)
 
 
 class FindingService:
@@ -52,6 +61,18 @@ class FindingService:
                 item = self._serialize(listing, version, match, state, cover)
                 grouped[listing.id] = item
             item["searches"].append({"id": str(search.id), "name": search.name})
+            evaluation = await self.db.scalar(
+                select(AiEvaluation)
+                .where(
+                    AiEvaluation.search_id == search.id,
+                    AiEvaluation.listing_id == listing.id,
+                    AiEvaluation.status == "complete",
+                )
+                .order_by(AiEvaluation.created_at.desc())
+            )
+            if evaluation and not item["ai_value_label"]:
+                item["ai_value_label"] = evaluation.value_label
+                item["ai_summary"] = evaluation.result.get("summary")
         return list(grouped.values())
 
     async def get(self, owner: User, listing_id: UUID) -> dict:
@@ -111,5 +132,7 @@ class FindingService:
             "seen": bool(state and state.seen),
             "note": state.note if state else None,
             "cover_media_id": str(cover.id) if cover else None,
+            "ai_value_label": None,
+            "ai_summary": None,
             "searches": [],
         }

@@ -114,6 +114,8 @@ class FindingResponse(BaseModel):
     seen: bool
     note: str | None
     cover_media_id: UUID | None
+    ai_value_label: str | None
+    ai_summary: str | None
     searches: list[dict[str, str]]
     media: list[dict[str, Any]] | None = None
 
@@ -131,6 +133,27 @@ class ScanRunResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     error_code: str | None
+
+
+class SettingsPatch(BaseModel):
+    expected_version: int = Field(ge=1)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    quiet_hours: dict[str, Any] | None = None
+    notification_mode: str | None = Field(default=None, pattern="^(immediate|digest)$")
+
+
+class ExportRequest(BaseModel):
+    format: str = Field(pattern="^(csv|json)$")
+    saved_only: bool = False
+
+
+class ExportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    format: str
+    status: str
+    expires_at: datetime | None
 
 
 class FilterSchemaResponse(BaseModel):

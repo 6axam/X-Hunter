@@ -5,9 +5,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import FileResponse
+from sqlalchemy import func, select
 
+from app.ai.openrouter import OpenRouterClient
 from app.api.dependencies import CurrentUser, DatabaseSession
+from app.api.errors import AppError
 from app.api.schemas import (
+    ExportRequest,
+    ExportResponse,
     FilterSchemaResponse,
     FindingResponse,
     FindingStatePatch,
@@ -20,9 +25,12 @@ from app.api.schemas import (
     SearchImportRequest,
     SearchPatchRequest,
     SearchResponse,
+    SettingsPatch,
 )
 from app.config import Settings, get_settings
-from app.models import Media
+from app.models import BudgetLedger, ExportJob, Media
+from app.models.base import utcnow
+from app.services.exports import ExportService
 from app.services.findings import FindingService
 from app.services.media import owner_can_access_media
 from app.services.runs import RunService
@@ -207,7 +215,106 @@ async def get_media(
         or not media.safe_path
         or not await owner_can_access_media(db, user, media)
     ):
-        from app.api.errors import AppError
-
         raise AppError(status_code=404, code="media_not_found", message="Изображение не найдено.")
     return FileResponse(media.safe_path, media_type=media.mime_type or "image/jpeg")
+
+
+@router.get("/ai/models", tags=["ai"])
+async def ai_models(
+    _: CurrentUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    if not settings.openrouter_api_key:
+        return {"configured": False, "updated_at": None, "models": []}
+    try:
+        raw_models = await OpenRouterClient(settings.openrouter_api_key).list_models()
+    except Exception as exc:
+        raise AppError(
+            status_code=503,
+            code="openrouter_unavailable",
+            message="Не удалось обновить список моделей OpenRouter.",
+        ) from exc
+    models = [
+        {
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "pricing": item.get("pricing"),
+            "supported_parameters": item.get("supported_parameters", []),
+        }
+        for item in raw_models
+    ]
+    return {"configured": True, "updated_at": utcnow(), "models": models}
+
+
+@router.get("/settings", tags=["owner"])
+async def get_owner_settings(user: CurrentUser) -> dict:
+    values = dict(user.settings)
+    return {
+        "version": int(values.pop("_version", 1)),
+        "timezone": user.timezone,
+        "quiet_hours": values.get("quiet_hours"),
+        "notification_mode": values.get("notification_mode", "immediate"),
+    }
+
+
+@router.patch("/settings", tags=["owner"])
+async def patch_owner_settings(body: SettingsPatch, user: CurrentUser, db: DatabaseSession) -> dict:
+    values = dict(user.settings)
+    current = int(values.get("_version", 1))
+    if body.expected_version != current:
+        raise AppError(
+            status_code=409,
+            code="revision_conflict",
+            message="Настройки уже изменились. Обновите страницу.",
+        )
+    changes = body.model_dump(exclude_unset=True, exclude={"expected_version", "timezone"})
+    values.update(changes)
+    values["_version"] = current + 1
+    user.settings = values
+    if body.timezone is not None:
+        user.timezone = body.timezone
+    await db.commit()
+    return await get_owner_settings(user)
+
+
+@router.get("/usage", tags=["ai"])
+async def usage(user: CurrentUser, db: DatabaseSession) -> dict:
+    totals = await db.execute(
+        select(
+            func.coalesce(func.sum(BudgetLedger.actual_usd), 0),
+            func.coalesce(func.sum(BudgetLedger.reserved_usd), 0),
+            func.coalesce(func.sum(BudgetLedger.uncertain_usd), 0),
+        ).where(BudgetLedger.owner_id == user.id)
+    )
+    actual, reserved, uncertain = totals.one()
+    return {
+        "actual_usd": str(actual),
+        "reserved_usd": str(reserved),
+        "uncertain_usd": str(uncertain),
+    }
+
+
+@router.post("/exports", response_model=ExportResponse, status_code=201, tags=["exports"])
+async def create_export(
+    body: ExportRequest,
+    user: CurrentUser,
+    db: DatabaseSession,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ExportResponse:
+    job = await ExportService(db, settings).create(user, body.format, body.saved_only)
+    return ExportResponse.model_validate(job)
+
+
+@router.get("/exports/{export_id}/download", response_class=FileResponse, tags=["exports"])
+async def download_export(export_id: UUID, user: CurrentUser, db: DatabaseSession) -> FileResponse:
+    job = await db.scalar(
+        select(ExportJob).where(ExportJob.id == export_id, ExportJob.owner_id == user.id)
+    )
+    if job is None or job.status != "ready" or not job.safe_path:
+        raise AppError(status_code=404, code="export_not_found", message="Экспорт не найден.")
+    if (
+        job.expires_at
+        and job.expires_at.replace(tzinfo=job.expires_at.tzinfo or utcnow().tzinfo) < utcnow()
+    ):
+        raise AppError(status_code=410, code="export_expired", message="Срок экспорта истёк.")
+    return FileResponse(job.safe_path, filename=f"olx-hunter.{job.format}")

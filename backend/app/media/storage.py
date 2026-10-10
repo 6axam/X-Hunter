@@ -5,7 +5,6 @@ import hashlib
 import ipaddress
 import socket
 from io import BytesIO
-from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -26,9 +25,17 @@ class MediaStore:
     def host_allowed(self, url: str) -> bool:
         parsed = urlsplit(url)
         host = (parsed.hostname or "").lower().rstrip(".")
-        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in {None, 443}:
+        if (
+            parsed.scheme != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.port not in {None, 443}
+        ):
             return False
-        return any(host == allowed or host.endswith(f".{allowed}") for allowed in self.settings.media_allowed_hosts)
+        return any(
+            host == allowed or host.endswith(f".{allowed}")
+            for allowed in self.settings.media_allowed_hosts
+        )
 
     async def _validate_network_target(self, url: str) -> None:
         if not self.host_allowed(url):
@@ -47,7 +54,8 @@ class MediaStore:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             for _ in range(4):
                 await self._validate_network_target(current)
-                async with client.stream("GET", current, headers={"User-Agent": "OLX-Hunter/0.1"}) as response:
+                headers = {"User-Agent": "OLX-Hunter/0.1"}
+                async with client.stream("GET", current, headers=headers) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")
                         if not location:
@@ -96,4 +104,3 @@ class MediaStore:
             "height": height,
             "byte_size": safe.stat().st_size,
         }
-

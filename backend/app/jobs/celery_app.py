@@ -22,6 +22,10 @@ celery_app.conf.update(
             "task": "app.jobs.tasks.download_media",
             "schedule": 20.0,
         },
+        "evaluate-ai": {
+            "task": "app.jobs.tasks.evaluate_ai",
+            "schedule": 30.0,
+        },
     },
     imports=("app.jobs.tasks",),
 )

@@ -35,6 +35,8 @@ export type Finding = {
   seen: boolean;
   note: string | null;
   cover_media_id: string | null;
+  ai_value_label: string | null;
+  ai_summary: string | null;
   searches: Array<{ id: string; name: string }>;
 };
 
@@ -47,4 +49,3 @@ export type Me = {
     source_http_enabled: boolean;
   };
 };
-

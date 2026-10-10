@@ -7,12 +7,14 @@ from uuid import UUID
 from aiogram import Bot
 from sqlalchemy import select
 
+from app.ai.openrouter import OpenRouterClient
 from app.config import get_settings
 from app.database import session_factory
 from app.jobs.celery_app import celery_app
-from app.models import Search
+from app.models import ListingVersion, Search, SearchMatch
 from app.models.base import utcnow
 from app.notifications.telegram import TelegramOutbox
+from app.services.ai import AiService
 from app.services.media import process_pending_media
 from app.services.runs import RunService
 from app.sources.olx import OlxSource
@@ -80,3 +82,44 @@ async def _download_media() -> int:
     settings = get_settings()
     async with session_factory() as db:
         return await process_pending_media(db, settings)
+
+
+@celery_app.task(name="app.jobs.tasks.evaluate_ai")
+def evaluate_ai() -> int:
+    return asyncio.run(_evaluate_ai())
+
+
+async def _evaluate_ai() -> int:
+    settings = get_settings()
+    if not settings.openrouter_api_key:
+        return 0
+    client = OpenRouterClient(settings.openrouter_api_key)
+    models = {item.get("id"): item for item in await client.list_models()}
+    completed = 0
+    async with session_factory() as db:
+        searches = list(await db.scalars(select(Search).where(Search.active.is_(True))))
+        service = AiService(db)
+        for search in searches:
+            if not search.ai_settings.get("enabled"):
+                continue
+            model = search.ai_settings.get("model")
+            if model not in models:
+                continue
+            matches = list(
+                await db.scalars(
+                    select(SearchMatch).where(
+                        SearchMatch.search_id == search.id,
+                        SearchMatch.decision == "match",
+                    )
+                )
+            )
+            for match in matches[:10]:
+                version = await db.get(ListingVersion, match.listing_version_id)
+                if version is None:
+                    continue
+                try:
+                    await service.evaluate_match(search, match, version, client, models[model])
+                except Exception:
+                    continue
+                completed += 1
+    return completed
