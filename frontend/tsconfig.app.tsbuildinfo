@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/i18n.ts","./src/main.tsx","./src/types.ts","./src/components/Layout.tsx","./src/components/ui.tsx","./src/lib/api.ts","./src/lib/telegram.ts","./src/pages/FindingPage.tsx","./src/pages/FindingsPage.test.ts","./src/pages/FindingsPage.tsx","./src/pages/SearchesPage.tsx","./src/pages/SettingsPage.tsx"],"version":"5.9.3"}
