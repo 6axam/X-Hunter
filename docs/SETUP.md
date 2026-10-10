@@ -40,6 +40,7 @@ sudo usermod -aG docker "$USER"
 
 - `TELEGRAM_BOT_TOKEN` — токен от BotFather;
 - `OWNER_TELEGRAM_ID` — числовой ID единственного владельца;
+- `TELEGRAM_INIT_DATA_MAX_AGE_SECONDS` — допустимый возраст Telegram `initData` в секундах, обычно `3600`;
 - `PUBLIC_BASE_URL` — публичный HTTPS URL приложения;
 - `APP_DOMAIN` — домен для автоматического TLS Caddy, например `hunter.example.com`;
 - `OPENROUTER_API_KEY` — только если нужен ИИ.
