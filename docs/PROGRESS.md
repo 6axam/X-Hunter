@@ -41,6 +41,7 @@
 - Добавлены versioned owner settings, usage API и CSV/JSON-экспорт на 24 часа; CSV защищён от formula injection.
 - Реализован opt-in HTTP-адаптер OLX: ограниченные redirects/body/timeouts, отдельные состояния blocked/partial/removed, разбор выдачи и догрузка полной карточки перед фильтрацией.
 - Добавлены Dockerfile backend/gateway, Caddy и Compose-сервисы `gateway/api/bot/worker/scheduler/postgres/redis` с persistent volumes и healthchecks.
+- Добавлен браузерный OLX-источник на Playwright/Chromium с отдельным флагом `SOURCE_BROWSER_ENABLED`; CAPTCHA и challenge возвращаются как `blocked`.
 - `scripts/setup` генерирует внутренние секреты; добавлены backup, restore и restore-test для чистой PostgreSQL-базы.
 - README и документация запуска, архитектуры и эксплуатации приведены в соответствие с фактически собранными компонентами.
 - Регулярный обход проверяет до 3 страниц с дедупликацией ID; фоновая актуальность проверяет старые ссылки раз в сутки и повторяет первый подтверждённый 404/410 не раньше чем через 6 часов.
@@ -59,13 +60,14 @@
 - Frontend: `npm run typecheck`, 2 Vitest-теста и production build проходят; desktop empty-state визуально проверен во встроенном браузере.
 - `docker compose config` проходит и перечисляет 8 сервисов; `.env` создан setup-скриптом с правами `0600` и не отслеживается Git.
 - Portainer отвечает на `127.0.0.1:9000`, инспектор ngrok отвечает на `127.0.0.1:4040`.
+- Docker-образ с Chromium собран; browser smoke test из API-контейнера получил страницу OLX (`complete`, 248282 байт), тестовый URL выдачи разобран в 1 объявление.
 - `alembic upgrade head` и `alembic check` проходят на чистой базе: модель и миграция синхронизированы.
 - Shell-синтаксис setup/backup/restore/test-restore и `git diff --check` проходят.
 
 ## Открытые проблемы
 
 - Подробная UI-спецификация `OLX_HUNTER_UI_PROMPT.md` не предоставлена. До её появления интерфейс реализуется по разделу 22 плана; окончательная UI-проверка будет нужна после добавления файла.
-- Допустимый и стабильный живой источник OLX не подтверждён. Адаптер и парсеры будут проверяться на локальных фикстурах, без ложного заявления о работающем мониторинге.
+- Прямой HTTP-источник OLX получает `403` от CloudFront; для локальной конфигурации включён Playwright-источник, его стабильность и лимиты нужно наблюдать на реальных поисках.
 - `SOURCE_HTTP_ENABLED` включён в локальном `.env`, но контрольный запрос к `https://www.olx.ua/uk/` из API-контейнера получает `403` от CloudFront; live-мониторинг пока заблокирован самим источником.
 - Нет внешних реквизитов Telegram, OpenRouter и публичного HTTPS-размещения.
 - Docker Compose runtime проверен на машине: образы собраны, PostgreSQL/Redis/API healthy, gateway и bot запущены. Полный Telegram/OLX live smoke test ещё требует публичного HTTPS и включения источника.
