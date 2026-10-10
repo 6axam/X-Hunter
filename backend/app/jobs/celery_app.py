@@ -18,6 +18,10 @@ celery_app.conf.update(
             "task": "app.jobs.tasks.deliver_notifications",
             "schedule": 10.0,
         },
+        "download-media": {
+            "task": "app.jobs.tasks.download_media",
+            "schedule": 20.0,
+        },
     },
     imports=("app.jobs.tasks",),
 )

@@ -33,13 +33,15 @@
 - Добавлен aiogram-бот с owner allowlist, командами `/start`, `/app`, `/help` и импортом OLX-ссылки через общий `SearchService`.
 - Добавлена доставка outbox с двумя кнопками, журналом попыток, обработкой `429`, блокировки бота и состоянием `delivery_unknown` без опасного автоматического повтора.
 - Добавлены Celery worker/beat задачи для планирования due-поисков, запуска scan и доставки pending-уведомлений.
+- Добавлен безопасный media pipeline: HTTPS/CDN allowlist, DNS/IP-проверка против SSRF, ручная проверка redirect, лимиты bytes/pixels, Pillow decode и генерируемые checksum-пути.
+- Изображения загружаются только для подходящих объявлений, выдаются через owner-protected API и обрабатываются отдельной Celery-задачей.
 
 ## Проверено
 
 - `PROJECT_PLAN.md` прочитан полностью, основной контракт реализации находится в разделе 22.
 - В текущем каталоге и доступных каталогах пользователя отсутствует `OLX_HUNTER_UI_PROMPT.md`.
 - `ruff check` и форматирование backend проходят.
-- `pytest`: 26 тестов проходят, включая URL round trip, полный текст описания, рекламу/дедупликацию, baseline, скидку, очистку, подпись Telegram, API находок и outbox-доставку.
+- `pytest`: 28 тестов проходят, включая URL round trip, полный текст описания, рекламу/дедупликацию, baseline, скидку, очистку, подпись Telegram, API находок, outbox и проверку медиа.
 - Первая миграция проверена полным циклом `upgrade head` и `downgrade base` на чистой SQLite-базе.
 - Frontend: `npm run typecheck`, 2 Vitest-теста и production build проходят; desktop empty-state визуально проверен во встроенном браузере.
 
@@ -51,4 +53,4 @@
 
 ## Следующий конкретный шаг
 
-Добавить безопасную загрузку медиа, OpenRouter-клиент с бюджетным резервом и export API; затем Compose/Caddy, backup/restore и итоговую сквозную проверку.
+Добавить OpenRouter-клиент с бюджетным резервом и export API; затем Compose/Caddy, backup/restore и итоговую сквозную проверку.

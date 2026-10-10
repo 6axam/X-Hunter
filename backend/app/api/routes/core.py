@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import FileResponse
 
 from app.api.dependencies import CurrentUser, DatabaseSession
 from app.api.schemas import (
@@ -21,7 +22,9 @@ from app.api.schemas import (
     SearchResponse,
 )
 from app.config import Settings, get_settings
+from app.models import Media
 from app.services.findings import FindingService
+from app.services.media import owner_can_access_media
 from app.services.runs import RunService
 from app.services.searches import SearchService
 from app.sources.olx import OlxSource
@@ -189,3 +192,22 @@ async def patch_finding_state(
     changes = body.model_dump(exclude_unset=True)
     result = await FindingService(db).patch_state(user, listing_id, changes)
     return FindingStateResponse.model_validate(result)
+
+
+@router.get("/media/{media_id}", response_class=FileResponse, tags=["media"])
+async def get_media(
+    media_id: UUID,
+    user: CurrentUser,
+    db: DatabaseSession,
+) -> FileResponse:
+    media = await db.get(Media, media_id)
+    if (
+        media is None
+        or media.status != "ready"
+        or not media.safe_path
+        or not await owner_can_access_media(db, user, media)
+    ):
+        from app.api.errors import AppError
+
+        raise AppError(status_code=404, code="media_not_found", message="Изображение не найдено.")
+    return FileResponse(media.safe_path, media_type=media.mime_type or "image/jpeg")

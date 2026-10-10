@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./olx_hunter.sqlite3"
     redis_url: str = "redis://localhost:6379/0"
     media_root: Path = Path("./media")
+    media_max_bytes: int = 10_000_000
+    media_max_pixels: int = 30_000_000
+    media_allowed_hosts: list[str] = Field(default_factory=lambda: ["olxcdn.com"])
     export_root: Path = Path("./exports")
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     default_timezone: str = "Europe/Kyiv"
@@ -41,6 +44,13 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("media_allowed_hosts", mode="before")
+    @classmethod
+    def parse_media_hosts(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip().lower() for item in value.split(",") if item.strip()]
         return value
 
     @field_validator("session_secret")

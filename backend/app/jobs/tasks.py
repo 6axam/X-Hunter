@@ -13,6 +13,7 @@ from app.jobs.celery_app import celery_app
 from app.models import Search
 from app.models.base import utcnow
 from app.notifications.telegram import TelegramOutbox
+from app.services.media import process_pending_media
 from app.services.runs import RunService
 from app.sources.olx import OlxSource
 
@@ -68,3 +69,14 @@ async def _deliver_notifications() -> int:
         return 0
     async with Bot(settings.telegram_bot_token) as bot, session_factory() as db:
         return await TelegramOutbox(db, settings, bot).deliver_pending()
+
+
+@celery_app.task(name="app.jobs.tasks.download_media")
+def download_media() -> int:
+    return asyncio.run(_download_media())
+
+
+async def _download_media() -> int:
+    settings = get_settings()
+    async with session_factory() as db:
+        return await process_pending_media(db, settings)
