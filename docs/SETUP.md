@@ -4,6 +4,38 @@
 
 Нужны Git, Docker с Compose plugin и OpenSSL. `./scripts/setup` создаёт `.env` с правами `0600`, генерирует `SESSION_SECRET` и пароль PostgreSQL, а также рабочие каталоги.
 
+### Docker Engine на Linux
+
+Проверьте установку:
+
+```bash
+docker --version
+docker compose version
+```
+
+Если команды уже работают, устанавливать Docker повторно не нужно. Запустите демон и добавьте своего пользователя в группу Docker:
+
+```bash
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+```
+
+После этого выйдите из системы и войдите снова (или выполните `newgrp docker`), затем проверьте доступ:
+
+```bash
+docker info
+```
+
+Если Docker ещё не установлен, на Ubuntu/Debian удобнее использовать официальный установочный скрипт Docker, после чего выполнить команды выше:
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+```
+
+Группа `docker` даёт пользователю права управления Docker Engine, поэтому добавляйте только доверенные учётные записи.
+
 В `.env` владелец заполняет внешние значения:
 
 - `TELEGRAM_BOT_TOKEN` — токен от BotFather;
