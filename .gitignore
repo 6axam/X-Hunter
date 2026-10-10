@@ -16,7 +16,7 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 frontend/playwright-report/
 frontend/test-results/
-media/
+/media/
 backups/
 exports/
 *.sqlite3
