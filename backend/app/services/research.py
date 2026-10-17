@@ -510,7 +510,9 @@ class ResearchService:
         candidates: list[ListingCandidate] = []
         seen: set[str] = set()
         failures: list[dict[str, str]] = []
-        max_candidates = max(session.max_items * 5, 25)
+        # Each planned phrase gets its first page.  Only later pagination is bounded by
+        # the global limit, otherwise a broad first phrase can hide model-family variants.
+        max_candidates = max(session.max_items * 5, 25) * len(queries)
         for phrase in queries:
             specification = self._search_spec(phrase, session.search_plan)
             if specification is None:
@@ -523,6 +525,8 @@ class ResearchService:
                 "pages": [],
             }
             for page in range(1, self.settings.scan_max_pages + 1):
+                if page > 1 and len(candidates) >= max_candidates:
+                    break
                 result = await self.source.fetch_search_page(specification, page)
                 page_record = {
                     "page": page,
@@ -558,14 +562,10 @@ class ResearchService:
                         continue
                     seen.add(identifier)
                     candidates.append(candidate)
-                    if len(candidates) >= max_candidates:
-                        break
-                if len(candidates) >= max_candidates or len(page_candidates) == 0:
+                if len(page_candidates) == 0:
                     break
             session.executed_searches = [*session.executed_searches, search_record]
             await self.db.commit()
-            if len(candidates) >= max_candidates:
-                break
 
         session.collected_count += len(candidates)
         if not candidates:

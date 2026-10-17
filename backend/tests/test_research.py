@@ -161,6 +161,7 @@ async def test_multi_query_collection_deduplicates_candidates(db_session: AsyncS
     assert collected is not None and len(collected) == 1
     assert session.collected_count == 1
     assert len(session.executed_searches) == 2
+    assert service.source.fetch_search_page.await_count == 2  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
