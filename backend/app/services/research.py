@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-# ruff: noqa: E501
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
 
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.openrouter import OpenRouterClient
@@ -136,7 +136,7 @@ class ResearchService:
     async def action(self, owner: User, session_id: UUID, action: str) -> ResearchSession:
         session = await self.get(owner, session_id)
         if action == "pause" and session.status in {"queued", "running"}:
-            session.status, session.stage = "paused", "paused"
+            session.status, session.stage, session.lease_expires_at = "paused", "paused", None
             await self._event(session, "paused", "Исследование приостановлено.")
         elif action == "resume" and session.status in {"paused", "waiting_configuration", "failed"}:
             if not self.settings.openrouter_api_key or not session.model:
@@ -148,7 +148,12 @@ class ResearchService:
             session.status, session.stage, session.error_code = "queued", "queued", None
             await self._event(session, "resumed", "Исследование поставлено в очередь.")
         elif action == "cancel" and session.status not in {"completed", "cancelled"}:
-            session.status, session.stage, session.finished_at = "cancelled", "cancelled", utcnow()
+            session.status, session.stage, session.finished_at, session.lease_expires_at = (
+                "cancelled",
+                "cancelled",
+                utcnow(),
+                None,
+            )
             await self._event(session, "cancelled", "Исследование остановлено.")
         else:
             raise AppError(
@@ -160,11 +165,36 @@ class ResearchService:
         return session
 
     async def run(self, session_id: UUID) -> str:
+        now = utcnow()
+        claimed = await self.db.execute(
+            update(ResearchSession)
+            .where(
+                ResearchSession.id == session_id,
+                or_(
+                    ResearchSession.status == "queued",
+                    and_(
+                        ResearchSession.status == "running",
+                        ResearchSession.lease_expires_at.is_not(None),
+                        ResearchSession.lease_expires_at < now,
+                    ),
+                ),
+            )
+            .values(
+                status="running", stage="preparing", lease_expires_at=now + timedelta(minutes=5)
+            )
+        )
+        if not claimed.rowcount:
+            return "skipped"
+        await self.db.commit()
         session = await self.db.get(ResearchSession, session_id)
-        if not session or session.status not in {"queued", "running"}:
+        if not session:
             return "skipped"
         if not self.settings.openrouter_api_key or not session.model:
-            session.status, session.stage = "waiting_configuration", "waiting_for_openrouter"
+            session.status, session.stage, session.lease_expires_at = (
+                "waiting_configuration",
+                "waiting_for_openrouter",
+                None,
+            )
             await self._event(session, "configuration", "Нужны ключ OpenRouter и модель.")
             await self.db.commit()
             return session.status
@@ -180,6 +210,7 @@ class ResearchService:
                 "model_not_available",
                 "model_not_available",
             )
+            session.lease_expires_at = None
             await self._event(
                 session,
                 "configuration",
@@ -189,10 +220,11 @@ class ResearchService:
             await self.db.commit()
             return session.status
 
-        session.status, session.stage, session.started_at = (
+        session.status, session.stage, session.started_at, session.lease_expires_at = (
             "running",
             "collecting_olx",
             session.started_at or utcnow(),
+            utcnow() + timedelta(minutes=5),
         )
         await self._event(session, "collecting", "Ищу подходящие объявления на OLX.ua.")
         await self.db.commit()
@@ -232,7 +264,12 @@ class ResearchService:
             await self._evaluate_item(session, item, version, model_info)
 
         if session.status == "running":
-            session.status, session.stage, session.finished_at = "completed", "completed", utcnow()
+            session.status, session.stage, session.finished_at, session.lease_expires_at = (
+                "completed",
+                "completed",
+                utcnow(),
+                None,
+            )
             await self._event(session, "completed", "Исследование завершено. Рейтинг сохранён.")
             await self.db.commit()
         return session.status
@@ -246,6 +283,7 @@ class ResearchService:
                 "source_error",
                 "query_build_failed",
             )
+            session.lease_expires_at = None
             await self.db.commit()
             return None
         result = await self.source.fetch_search_page(parsed.search)
@@ -255,6 +293,7 @@ class ResearchService:
                 "source_unavailable",
                 result.error_code,
             )
+            session.lease_expires_at = None
             await self._event(
                 session,
                 "source_error",
@@ -288,6 +327,7 @@ class ResearchService:
                 "pricing_unknown",
                 "pricing_unknown",
             )
+            session.lease_expires_at = None
             await self._event(
                 session,
                 "budget",
@@ -350,6 +390,7 @@ class ResearchService:
         session.processed_count += 1
         session.estimated_cost_usd += estimate
         session.actual_cost_usd += actual
+        session.lease_expires_at = utcnow() + timedelta(minutes=5)
         if result.recommendation == "shortlist":
             session.accepted_count += 1
         else:

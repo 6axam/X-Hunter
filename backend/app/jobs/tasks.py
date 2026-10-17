@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 from aiogram import Bot
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from app.ai.openrouter import OpenRouterClient
 from app.config import get_settings
@@ -106,7 +106,18 @@ async def _schedule_research() -> int:
     async with session_factory() as db:
         sessions = list(
             await db.scalars(
-                select(ResearchSession).where(ResearchSession.status == "queued").limit(20)
+                select(ResearchSession)
+                .where(
+                    or_(
+                        ResearchSession.status == "queued",
+                        and_(
+                            ResearchSession.status == "running",
+                            ResearchSession.lease_expires_at.is_not(None),
+                            ResearchSession.lease_expires_at < utcnow(),
+                        ),
+                    )
+                )
+                .limit(20)
             )
         )
         for session in sessions:
