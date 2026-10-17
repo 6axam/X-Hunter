@@ -337,7 +337,7 @@ class ResearchService:
             )
             await self.db.commit()
             return
-        estimate = prompt_price * 5_000 + completion_price * 900 + request_price
+        estimate = prompt_price * 5_000 + completion_price * 1_400 + request_price
         if session.actual_cost_usd + estimate > session.budget_usd:
             session.status, session.stage, session.error_code = (
                 "budget_exhausted",

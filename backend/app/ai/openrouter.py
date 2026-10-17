@@ -176,7 +176,9 @@ class OpenRouterClient:
         return {
             "model": model,
             "temperature": 0,
-            "max_tokens": 900,
+            # A structured recommendation can include several risks and evidence quotes.
+            # 900 tokens truncated real Luna JSON before the closing brace.
+            "max_tokens": 1400,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {

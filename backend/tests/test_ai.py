@@ -36,6 +36,19 @@ def test_strict_schema_rejects_extra_object_fields() -> None:
     assert schema["$defs"]["Evidence"]["additionalProperties"] is False
 
 
+def test_research_payload_has_room_for_complete_structured_response() -> None:
+    payload = OpenRouterClient("secret").build_research_payload(
+        model="vendor/model",
+        query="електровелосипед",
+        title="Велосипед",
+        description="Опис",
+        attributes={},
+        price="100 грн",
+        compact_memory={"leaders": []},
+    )
+    assert payload["max_tokens"] == 1400
+
+
 @pytest.mark.asyncio
 async def test_openrouter_validates_evidence_quotes() -> None:
     response = {
