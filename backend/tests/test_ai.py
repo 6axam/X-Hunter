@@ -85,6 +85,11 @@ async def test_openrouter_validates_evidence_quotes() -> None:
     assert usage == {"prompt_tokens": 20, "completion_tokens": 10}
 
 
+def test_evidence_source_keeps_ukrainian_attribute_values() -> None:
+    source = OpenRouterClient._evidence_source("Велосипед", None, {"Стан": "Вживаний товар"})
+    assert "вживаний товар" in source
+
+
 @pytest.mark.asyncio
 async def test_budget_reservation_blocks_parallel_overspend(db_session: AsyncSession) -> None:
     owner = User(telegram_id=111)

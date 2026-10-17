@@ -141,10 +141,10 @@ class OpenRouterClient:
             response.raise_for_status()
             body = response.json()
             result = AnalysisResult.model_validate_json(body["choices"][0]["message"]["content"])
-            source_text = " ".join(
-                [kwargs["title"], kwargs.get("description") or "", json.dumps(kwargs["attributes"])]
-            ).casefold()
-            if any(item.quote.casefold() not in source_text for item in result.evidence):
+            source_text = self._evidence_source(
+                kwargs["title"], kwargs.get("description"), kwargs["attributes"]
+            )
+            if any(self._normalise(item.quote) not in source_text for item in result.evidence):
                 raise ValueError("OpenRouter returned evidence absent from the listing")
             usage = body.get("usage") or {}
             usage_result = self._usage(usage)
@@ -226,10 +226,10 @@ class OpenRouterClient:
             result = ResearchAnalysisResult.model_validate_json(
                 body["choices"][0]["message"]["content"]
             )
-            source_text = " ".join(
-                [kwargs["title"], kwargs.get("description") or "", json.dumps(kwargs["attributes"])]
-            ).casefold()
-            if any(item.quote.casefold() not in source_text for item in result.evidence):
+            source_text = self._evidence_source(
+                kwargs["title"], kwargs.get("description"), kwargs["attributes"]
+            )
+            if any(self._normalise(item.quote) not in source_text for item in result.evidence):
                 raise ValueError("OpenRouter returned evidence absent from the listing")
             return result, self._usage(body.get("usage") or {})
         finally:
@@ -245,3 +245,15 @@ class OpenRouterClient:
             "completion_tokens": int(usage.get("completion_tokens") or 0),
             "cached_input_tokens": int(cached or 0),
         }
+
+    @staticmethod
+    def _normalise(value: str) -> str:
+        return " ".join(value.casefold().split())
+
+    @classmethod
+    def _evidence_source(
+        cls, title: str, description: str | None, attributes: dict[str, Any]
+    ) -> str:
+        return cls._normalise(
+            " ".join([title, description or "", json.dumps(attributes, ensure_ascii=False)])
+        )
