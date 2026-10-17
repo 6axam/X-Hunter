@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, Field, model_validator
@@ -208,10 +208,48 @@ class OlxSource(ListingSource):
         response = await self._fetch_html(url)
         if response.state is not SourceState.COMPLETE:
             return response
+        final_url = str(response.metadata.get("final_url") or url)
+        expected_path = unquote(specification.path).rstrip("/").casefold()
+        actual_path = unquote(urlsplit(final_url).path).rstrip("/").casefold()
+        if not expected_path or actual_path != expected_path:
+            logger.warning(
+                "OLX returned a page that does not preserve the requested search path",
+                extra={"event": "olx_search_path_mismatch", "status": final_url},
+            )
+            return SourceResult(
+                state=SourceState.PARTIAL,
+                error_code="search_result_mismatch",
+                message="OLX не подтвердил выдачу для запрошенной поисковой фразы.",
+                metadata={"requested_url": url, "final_url": final_url},
+            )
+        try:
+            candidates = parse_search_html(response.data)
+        except Exception:
+            logger.warning(
+                "OLX search structure was not parsed", extra={"event": "olx_search_parse_error"}
+            )
+            return SourceResult(
+                state=SourceState.PARTIAL,
+                error_code="search_structure_changed",
+                message="Структура выдачи OLX не распознана.",
+                metadata={"requested_url": url, "final_url": final_url},
+            )
+        if not candidates:
+            return SourceResult(
+                state=SourceState.PARTIAL,
+                error_code="search_empty_results",
+                message="OLX не показал ни одного распознанного результата для этой фразы.",
+                metadata={"requested_url": url, "final_url": final_url},
+            )
         return SourceResult(
             state=SourceState.COMPLETE,
-            data=[item.model_dump(mode="json") for item in parse_search_html(response.data)],
-            metadata={"pages_checked": 1},
+            data=[item.model_dump(mode="json") for item in candidates],
+            metadata={
+                "pages_checked": 1,
+                "requested_url": url,
+                "final_url": final_url,
+                "results_count": len(candidates),
+            },
         )
 
     async def fetch_listing(self, url: str) -> SourceResult:
@@ -301,7 +339,11 @@ class OlxSource(ListingSource):
                         return SourceResult(
                             state=SourceState.PARTIAL, error_code="source_body_too_large"
                         )
-                    return SourceResult(state=SourceState.COMPLETE, data=body)
+                    return SourceResult(
+                        state=SourceState.COMPLETE,
+                        data=body,
+                        metadata={"final_url": page.url, "page_title": await page.title()},
+                    )
                 finally:
                     await browser.close()
         except PlaywrightTimeoutError:
@@ -379,7 +421,11 @@ class OlxSource(ListingSource):
                         state=SourceState.PARTIAL,
                         error_code="source_body_too_large",
                     )
-                return SourceResult(state=SourceState.COMPLETE, data=response.text)
+                return SourceResult(
+                    state=SourceState.COMPLETE,
+                    data=response.text,
+                    metadata={"final_url": str(response.url)},
+                )
             return SourceResult(state=SourceState.PARTIAL, error_code="too_many_redirects")
         except (httpx.TimeoutException, httpx.NetworkError):
             return SourceResult(state=SourceState.PARTIAL, error_code="source_network_error")

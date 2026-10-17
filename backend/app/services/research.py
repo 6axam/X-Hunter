@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
@@ -18,7 +19,7 @@ from app.models.base import utcnow
 from app.services.ai import AiService
 from app.services.scanning import ScanService
 from app.sources.base import SourceState
-from app.sources.olx import OlxSource
+from app.sources.olx import OlxSearchSpec, OlxSource
 from app.sources.types import ListingCandidate
 
 MARKETPLACES = {
@@ -27,6 +28,39 @@ MARKETPLACES = {
     "rozetka": {"label": "Rozetka", "available": False, "reason": "Адаптер ещё не проверен"},
 }
 logger = get_logger(__name__)
+
+_TOKEN_PATTERN = re.compile(r"[a-zа-яіїєґ0-9]+", re.IGNORECASE)
+_PRODUCT_TERMS = {
+    "laptop": {"laptop", "notebook", "ноутбук", "ноут", "лептоп"},
+    "notebook": {"laptop", "notebook", "ноутбук", "ноут", "лептоп"},
+    "phone": {"phone", "smartphone", "телефон", "смартфон", "мобільний"},
+    "smartphone": {"phone", "smartphone", "телефон", "смартфон", "мобільний"},
+    "bicycle": {"bicycle", "bike", "велосипед", "вел"},
+}
+_UNRELATED_PRODUCT_TERMS = {
+    "мотоцикл",
+    "мото",
+    "худі",
+    "платье",
+    "сукня",
+    "тример",
+    "сантехнік",
+    "сантехник",
+    "карта",
+    "послуги",
+    "услуги",
+}
+_BRAND_ALIASES = {
+    "lenovo": {"lenovo", "леново"},
+    "asus": {"asus", "асус"},
+    "acer": {"acer", "асер"},
+    "hp": {"hp", "hewlett", "packard"},
+    "dell": {"dell", "делл"},
+    "apple": {"apple", "macbook", "макбук"},
+}
+_FAMILY_ALIASES = {
+    "thinkpad": {"thinkpad", "тинкпад", "синкпад"},
+}
 
 
 class ResearchService:
@@ -267,6 +301,33 @@ class ResearchService:
                 return session.status
             if session.processed_count >= session.max_items:
                 break
+            decision, reason = self._deterministic_relevance(candidate, session.search_plan)
+            if decision == "reject":
+                await self._reject_before_analysis(session, candidate, reason)
+                continue
+            details = await self.source.fetch_listing(candidate.canonical_url)
+            if details.state is SourceState.COMPLETE and details.data:
+                candidate = ListingCandidate.model_validate(details.data)
+                decision, reason = self._deterministic_relevance(candidate, session.search_plan)
+            else:
+                decision, reason = "uncertain", "Не удалось подтвердить полную карточку OLX."
+                logger.warning(
+                    "OLX listing detail was unavailable before AI analysis",
+                    extra={
+                        "research_id": session.id,
+                        "event": "olx_listing_detail_unavailable",
+                        "status": details.error_code or details.state,
+                    },
+                )
+            if decision == "reject":
+                await self._reject_before_analysis(session, candidate, reason)
+                continue
+            if decision == "uncertain":
+                decision = await self._check_uncertain_relevance(
+                    session, candidate, model_info, reason
+                )
+                if decision != "accept":
+                    continue
             listing, version, _, _ = await ScanService(self.db).upsert_listing(candidate)
             item = await self.db.scalar(
                 select(ResearchItem).where(
@@ -416,59 +477,262 @@ class ResearchService:
         )
         return not plan.needs_clarification
 
-    async def _collect_olx(self, session: ResearchSession) -> list[ListingCandidate] | None:
-        url = f"https://www.olx.ua/uk/list/q-{quote(session.query, safe='')}/"
-        parsed = self.source.parse_search_url(url)
+    def _search_spec(self, phrase: str, plan: dict[str, Any]) -> OlxSearchSpec | None:
+        """Build OLX URL only from a compact planner phrase and structured price data."""
+        path_phrase = quote("-".join(phrase.split()), safe="-")
+        parsed = self.source.parse_search_url(f"https://www.olx.ua/uk/list/q-{path_phrase}/")
         if not parsed.search:
-            session.status, session.stage, session.error_code = (
+            return None
+        max_price = plan.get("max_price")
+        currency = plan.get("currency")
+        specification = parsed.search.model_copy(
+            update={
+                "price_to": Decimal(str(max_price)) if max_price else None,
+                "currency": currency if currency == "UAH" else None,
+            }
+        )
+        specification.current_url = self.source.build_search_url(specification)
+        return specification
+
+    async def _collect_olx(self, session: ResearchSession) -> list[ListingCandidate] | None:
+        queries = list(dict.fromkeys(session.search_plan.get("search_queries") or []))
+        if not queries:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
                 "failed",
-                "source_error",
-                "query_build_failed",
+                "planning_invalid",
+                "planning_invalid",
+                None,
             )
-            session.lease_expires_at = None
+            await self._event(session, "planning_error", "План не содержит поисковых фраз для OLX.")
             await self.db.commit()
             return None
-        result = await self.source.fetch_search_page(parsed.search)
-        if result.state not in {SourceState.COMPLETE, SourceState.PARTIAL}:
-            session.status, session.stage, session.error_code = (
+
+        candidates: list[ListingCandidate] = []
+        seen: set[str] = set()
+        failures: list[dict[str, str]] = []
+        max_candidates = max(session.max_items * 5, 25)
+        for phrase in queries:
+            specification = self._search_spec(phrase, session.search_plan)
+            if specification is None:
+                failures.append({"query": phrase, "code": "query_build_failed"})
+                continue
+            search_record: dict[str, Any] = {
+                "query": phrase,
+                "url": specification.current_url,
+                "price_to": str(specification.price_to) if specification.price_to else None,
+                "pages": [],
+            }
+            for page in range(1, self.settings.scan_max_pages + 1):
+                result = await self.source.fetch_search_page(specification, page)
+                page_record = {
+                    "page": page,
+                    "state": result.state.value,
+                    "url": result.metadata.get("requested_url", specification.current_url),
+                    "final_url": result.metadata.get("final_url"),
+                    "results": len(result.data or []),
+                    "error_code": result.error_code,
+                }
+                search_record["pages"].append(page_record)
+                logger.info(
+                    "OLX planned search page processed",
+                    extra={
+                        "research_id": session.id,
+                        "event": "olx_planned_search",
+                        "status": (
+                            f"query={phrase}; page={page}; results={page_record['results']}; "
+                            f"state={result.state.value}; error={result.error_code or '-'}"
+                        ),
+                    },
+                )
+                if result.state is not SourceState.COMPLETE:
+                    failures.append(
+                        {"query": phrase, "code": result.error_code or result.state.value}
+                    )
+                    break
+                page_candidates = [
+                    ListingCandidate.model_validate(raw) for raw in result.data or []
+                ]
+                for candidate in page_candidates:
+                    identifier = candidate.source_listing_id or candidate.canonical_url
+                    if identifier in seen:
+                        continue
+                    seen.add(identifier)
+                    candidates.append(candidate)
+                    if len(candidates) >= max_candidates:
+                        break
+                if len(candidates) >= max_candidates or len(page_candidates) == 0:
+                    break
+            session.executed_searches = [*session.executed_searches, search_record]
+            await self.db.commit()
+            if len(candidates) >= max_candidates:
+                break
+
+        session.collected_count += len(candidates)
+        if not candidates:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
                 "failed",
                 "source_unavailable",
-                result.error_code,
+                "search_no_verified_results",
+                None,
             )
-            session.lease_expires_at = None
             await self._event(
                 session,
                 "source_error",
-                result.message or "OLX временно недоступен.",
-                {"code": result.error_code},
+                "OLX не подтвердил релевантную выдачу ни для одной поисковой фразы.",
+                {"failures": failures},
             )
             await self.db.commit()
+            return None
+        await self._event(
+            session,
+            "collected",
+            f"Подтверждено кандидатов OLX: {len(candidates)}.",
+            {"queries": queries, "collected": len(candidates), "failures": failures},
+        )
+        await self.db.commit()
+        return candidates
+
+    @staticmethod
+    def _candidate_tokens(candidate: ListingCandidate) -> set[str]:
+        values = [candidate.title, candidate.description or "", *candidate.attributes.values()]
+        return set(_TOKEN_PATTERN.findall(" ".join(values).casefold()))
+
+    def _deterministic_relevance(
+        self, candidate: ListingCandidate, plan: dict[str, Any]
+    ) -> tuple[str, str]:
+        """Reject clear mismatches using product semantics, not one arbitrary substring."""
+        tokens = self._candidate_tokens(candidate)
+        max_price = plan.get("max_price")
+        if (
+            max_price
+            and candidate.price is not None
+            and (candidate.currency or "").upper() == "UAH"
+            and candidate.price > Decimal(str(max_price))
+        ):
+            return "reject", "Цена выше жёсткого лимита плана."
+
+        product_type = str(plan.get("product_type") or "").casefold()
+        product_terms = _PRODUCT_TERMS.get(product_type, {product_type})
+        has_product = bool(tokens & product_terms)
+        if tokens & _UNRELATED_PRODUCT_TERMS and not has_product:
+            return "reject", "Объявление относится к другому типу товара или услуги."
+        if not has_product:
+            return "uncertain", "Тип товара не подтверждён карточкой выдачи."
+
+        brand = str(plan.get("brand") or "").casefold()
+        expected_brand = _BRAND_ALIASES.get(brand, {brand} if brand else set())
+        known_other_brand = any(
+            aliases & tokens for name, aliases in _BRAND_ALIASES.items() if name != brand
+        )
+        if expected_brand and not (expected_brand & tokens) and known_other_brand:
+            return "reject", "В карточке указан другой обязательный бренд."
+
+        family = str(plan.get("model_family") or "").casefold().replace(" ", "")
+        expected_family = _FAMILY_ALIASES.get(family, {family} if family else set())
+        has_family = bool(expected_family & tokens)
+        if expected_brand and expected_brand & tokens and (not expected_family or has_family):
+            return "accept", "Тип товара, бренд и модельное семейство подтверждены."
+        if has_family:
+            return "accept", "Модельное семейство подтверждено в карточке."
+        if expected_brand and expected_brand & tokens:
+            return "uncertain", "Бренд подходит, но семейство модели не подтверждено."
+        return "uncertain", "Карточка похожа по типу товара, но требует дешёвой проверки."
+
+    async def _reject_before_analysis(
+        self, session: ResearchSession, candidate: ListingCandidate, reason: str
+    ) -> None:
+        session.rejected_before_analysis_count += 1
+        await self._event(
+            session,
+            "prefilter_reject",
+            f"Отсеяно до ИИ-анализа: {candidate.title[:120]}",
+            {"reason": reason, "url": candidate.canonical_url},
+        )
+        await self.db.commit()
+        logger.info(
+            "Candidate rejected before detailed AI analysis",
+            extra={
+                "research_id": session.id,
+                "event": "research_prefilter_reject",
+                "status": reason,
+            },
+        )
+
+    async def _check_uncertain_relevance(
+        self,
+        session: ResearchSession,
+        candidate: ListingCandidate,
+        model_info: dict[str, Any],
+        reason: str,
+    ) -> str:
+        """Use a small, bounded Luna call only for cards that rules cannot classify."""
+        pricing = model_info.get("pricing") or {}
+        prompt_price = AiService._price(pricing.get("prompt"))
+        completion_price = AiService._price(pricing.get("completion"))
+        request_price = AiService._price(pricing.get("request")) or Decimal("0")
+        if prompt_price is None or completion_price is None:
+            await self._reject_before_analysis(
+                session, candidate, "Неизвестная цена модели для дешёвой проверки."
+            )
+            return "reject"
+        estimate = prompt_price * 2_500 + completion_price * 220 + request_price
+        if session.actual_cost_usd + estimate > session.budget_usd:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "budget_exhausted",
+                "relevance_budget_exhausted",
+                "budget_exhausted",
+                None,
+            )
+            await self._event(
+                session, "budget", "Лимит расходов исчерпан до проверки неоднозначной карточки."
+            )
+            await self.db.commit()
+            return "reject"
+        session.stage = "checking_relevance"
+        await self.db.commit()
+        try:
+            result, usage = await OpenRouterClient(
+                self.settings.openrouter_api_key or ""
+            ).check_relevance(
+                model=session.model or "",
+                plan=session.search_plan,
+                title=candidate.title,
+                description=candidate.description,
+                attributes=candidate.attributes,
+                price=f"{candidate.price or ''} {candidate.currency or ''}".strip() or None,
+            )
+        except Exception as exc:
+            await self._reject_before_analysis(
+                session, candidate, "Дешёвая проверка релевантности не вернула безопасный ответ."
+            )
             logger.warning(
-                "OLX search page unavailable",
+                "Cheap relevance check failed",
                 extra={
                     "research_id": session.id,
-                    "event": "olx_search_unavailable",
-                    "status": result.error_code or result.state,
+                    "event": "research_relevance_failed",
+                    "status": type(exc).__name__,
                 },
             )
-            return None
-        candidates: list[ListingCandidate] = []
-        for raw in (result.data or [])[: session.max_items]:
-            candidate = ListingCandidate.model_validate(raw)
-            details = await self.source.fetch_listing(candidate.canonical_url)
-            if details.state is SourceState.COMPLETE and details.data:
-                candidate = ListingCandidate.model_validate(details.data)
-            elif details.state is not SourceState.COMPLETE:
-                logger.warning(
-                    "OLX listing detail was unavailable; evaluating search-card data",
-                    extra={
-                        "research_id": session.id,
-                        "event": "olx_listing_detail_unavailable",
-                        "status": details.error_code or details.state,
-                    },
-                )
-            candidates.append(candidate)
-        return candidates
+            return "reject"
+        actual = (
+            prompt_price * usage["prompt_tokens"]
+            + completion_price * usage["completion_tokens"]
+            + request_price
+        )
+        session.estimated_cost_usd += estimate
+        session.actual_cost_usd += actual
+        session.lease_expires_at = utcnow() + timedelta(minutes=5)
+        if result.decision != "accept":
+            await self._reject_before_analysis(session, candidate, result.reason)
+            return result.decision
+        await self._event(
+            session,
+            "relevance_accepted",
+            f"Карточка прошла краткую проверку: {candidate.title[:120]}",
+            {"reason": result.reason, "initial_reason": reason},
+        )
+        await self.db.commit()
+        return "accept"
 
     async def _evaluate_item(
         self,
