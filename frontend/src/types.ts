@@ -56,3 +56,22 @@ export type Me = {
     source_http_enabled: boolean;
   };
 };
+
+export type Marketplace = { id: string; label: string; available: boolean; reason: string | null };
+
+export type ResearchSession = {
+  id: string; query: string; marketplaces: string[]; model: string | null; status: string; stage: string;
+  max_items: number; cursor: number; processed_count: number; accepted_count: number; rejected_count: number;
+  compact_memory: Record<string, unknown>; budget_usd: string; estimated_cost_usd: string; actual_cost_usd: string;
+  error_code: string | null; started_at: string | null; finished_at: string | null; created_at: string; updated_at: string;
+};
+
+export type ResearchItem = {
+  id: string; listing_id: string; sequence: number; status: string; score: number | null; confidence: string | null;
+  recommendation: string | null; listing_snapshot: { title?: string; price?: string | null; currency?: string | null; city?: string | null; url?: string };
+  analysis: { summary?: string; strengths?: string[]; risks?: string[]; missing_information?: string[]; market_assessment?: string; evidence?: Array<{ quote: string }> };
+  input_tokens: number | null; output_tokens: number | null; cached_input_tokens: number | null;
+  estimated_cost_usd: string | null; actual_cost_usd: string | null; error_code: string | null; created_at: string;
+};
+
+export type ResearchEvent = { id: string; kind: string; message: string; payload: Record<string, unknown>; created_at: string };

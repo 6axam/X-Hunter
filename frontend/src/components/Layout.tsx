@@ -1,8 +1,9 @@
-import { Binoculars, ListFilter, Settings2 } from "lucide-react";
+import { Binoculars, ListFilter, Settings2, Sparkles } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { t } from "../i18n";
 
 const items = [
+  { to: "/research", label: "ИИ-поиск", icon: Sparkles },
   { to: "/searches", label: t.searches, icon: ListFilter },
   { to: "/findings", label: t.findings, icon: Binoculars },
   { to: "/settings", label: t.settings, icon: Settings2 },

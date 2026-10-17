@@ -1,4 +1,4 @@
-import type { Draft, Finding, Me, Search } from "../types";
+import type { Draft, Finding, Marketplace, Me, ResearchEvent, ResearchItem, ResearchSession, Search } from "../types";
 
 let csrfToken = sessionStorage.getItem("olx-hunter-csrf");
 
@@ -55,6 +55,13 @@ export const api = {
       body: JSON.stringify({ expected_revision: search.revision, ...body }),
     }),
   scan: (id: string) => request<{ status: string; error_code: string | null }>(`/searches/${id}/scans`, { method: "POST" }),
+  marketplaces: () => request<{ marketplaces: Marketplace[] }>("/marketplaces"),
+  researchSessions: () => request<ResearchSession[]>("/research-sessions"),
+  createResearch: (body: { query: string; marketplaces: string[]; max_items: number; budget_usd: string; model?: string }) => request<ResearchSession>("/research-sessions", { method: "POST", body: JSON.stringify(body) }),
+  research: (id: string) => request<ResearchSession>(`/research-sessions/${id}`),
+  researchItems: (id: string) => request<ResearchItem[]>(`/research-sessions/${id}/items`),
+  researchEvents: (id: string) => request<ResearchEvent[]>(`/research-sessions/${id}/events`),
+  researchAction: (id: string, action: "pause" | "resume" | "cancel") => request<ResearchSession>(`/research-sessions/${id}/actions`, { method: "POST", body: JSON.stringify({ action }) }),
   findings: (saved = false) => request<Finding[]>(`/findings${saved ? "?saved=true" : ""}`),
   finding: (id: string) => request<Finding>(`/findings/${id}`),
   patchFinding: (id: string, body: Partial<Pick<Finding, "saved" | "hidden" | "seen" | "note">>) =>
