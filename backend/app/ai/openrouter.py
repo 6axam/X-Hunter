@@ -218,20 +218,35 @@ class OpenRouterClient:
         own_client = self.client is None
         client = self.client or httpx.AsyncClient(timeout=60)
         try:
-            response = await client.post(
-                f"{self.base_url}/chat/completions", headers=self.headers, json=payload
-            )
-            response.raise_for_status()
-            body = response.json()
-            result = ResearchAnalysisResult.model_validate_json(
-                body["choices"][0]["message"]["content"]
-            )
-            source_text = self._evidence_source(
-                kwargs["title"], kwargs.get("description"), kwargs["attributes"]
-            )
-            if any(self._normalise(item.quote) not in source_text for item in result.evidence):
-                raise ValueError("OpenRouter returned evidence absent from the listing")
-            return result, self._usage(body.get("usage") or {})
+            total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "cached_input_tokens": 0}
+            for attempt in range(2):
+                response = await client.post(
+                    f"{self.base_url}/chat/completions", headers=self.headers, json=payload
+                )
+                response.raise_for_status()
+                body = response.json()
+                usage = self._usage(body.get("usage") or {})
+                for key, value in usage.items():
+                    total_usage[key] += value
+                result = ResearchAnalysisResult.model_validate_json(
+                    body["choices"][0]["message"]["content"]
+                )
+                source_text = self._evidence_source(
+                    kwargs["title"], kwargs.get("description"), kwargs["attributes"]
+                )
+                if all(self._normalise(item.quote) in source_text for item in result.evidence):
+                    return result, total_usage
+                if attempt == 0:
+                    payload["messages"].append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Повтори ответ. Каждая evidence.quote должна быть дословной "
+                                "короткой цитатой из title, description или attributes выше."
+                            ),
+                        }
+                    )
+            raise ValueError("OpenRouter returned evidence absent from the listing twice")
         finally:
             if own_client:
                 await client.aclose()
