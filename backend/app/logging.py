@@ -25,12 +25,16 @@ _SECRET_PATTERN = re.compile(
 class JsonFormatter(logging.Formatter):
     """Emit one safe JSON object per line, easy to search with jq or rg."""
 
+    def __init__(self, service: str | None = None) -> None:
+        super().__init__()
+        self.service = service or os.getenv("SERVICE_NAME", "backend")
+
     def format(self, record: logging.LogRecord) -> str:
         message = _SECRET_PATTERN.sub(r"\1=[REDACTED]", record.getMessage())
         payload: dict[str, Any] = {
             "time": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
-            "service": getattr(record, "service", os.getenv("SERVICE_NAME", "backend")),
+            "service": getattr(record, "service", self.service),
             "logger": record.name,
             "message": message,
         }
@@ -53,7 +57,7 @@ def configure_logging(settings: Settings, service: str | None = None) -> None:
 
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
     root.setLevel(level)
-    formatter = JsonFormatter()
+    formatter = JsonFormatter(service_name)
     stream = logging.StreamHandler(sys.stdout)
     stream.setLevel(level)
     stream.setFormatter(formatter)
