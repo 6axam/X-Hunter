@@ -46,7 +46,7 @@ def test_research_payload_has_room_for_complete_structured_response() -> None:
         price="100 грн",
         compact_memory={"leaders": []},
     )
-    assert payload["max_tokens"] == 1400
+    assert payload["max_tokens"] == 2400
 
 
 @pytest.mark.asyncio

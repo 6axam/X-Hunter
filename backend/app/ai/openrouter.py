@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: E501
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -28,12 +28,12 @@ class ResearchAnalysisResult(BaseModel):
     recommendation: Literal["shortlist", "reject", "needs_details"]
     score: int = Field(ge=0, le=100)
     confidence: float = Field(ge=0, le=1)
-    summary: str = Field(max_length=600)
-    strengths: list[str] = Field(max_length=8)
-    risks: list[str] = Field(max_length=8)
-    missing_information: list[str] = Field(max_length=8)
-    market_assessment: str = Field(max_length=400)
-    evidence: list[Evidence] = Field(max_length=12)
+    summary: str = Field(max_length=360)
+    strengths: list[Annotated[str, Field(max_length=180)]] = Field(max_length=4)
+    risks: list[Annotated[str, Field(max_length=180)]] = Field(max_length=4)
+    missing_information: list[Annotated[str, Field(max_length=160)]] = Field(max_length=4)
+    market_assessment: str = Field(max_length=260)
+    evidence: list[Evidence] = Field(max_length=6)
 
 
 def strict_json_schema(model: type[BaseModel]) -> dict[str, Any]:
@@ -176,9 +176,8 @@ class OpenRouterClient:
         return {
             "model": model,
             "temperature": 0,
-            # A structured recommendation can include several risks and evidence quotes.
-            # 900 tokens truncated real Luna JSON before the closing brace.
-            "max_tokens": 1400,
+            # Hidden reasoning and a strict JSON result share this budget for some providers.
+            "max_tokens": 2400,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
