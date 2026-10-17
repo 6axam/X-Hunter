@@ -233,7 +233,10 @@ class OpenRouterClient:
                 source_text = self._evidence_source(
                     kwargs["title"], kwargs.get("description"), kwargs["attributes"]
                 )
-                if all(self._normalise(item.quote) in source_text for item in result.evidence):
+                verified_evidence = [
+                    item for item in result.evidence if self._normalise(item.quote) in source_text
+                ]
+                if len(verified_evidence) == len(result.evidence):
                     return result, total_usage
                 if attempt == 0:
                     payload["messages"].append(
@@ -245,7 +248,10 @@ class OpenRouterClient:
                             ),
                         }
                     )
-            raise ValueError("OpenRouter returned evidence absent from the listing twice")
+            if verified_evidence:
+                result.evidence = verified_evidence
+                return result, total_usage
+            raise ValueError("OpenRouter returned no evidence present in the listing")
         finally:
             if own_client:
                 await client.aclose()
