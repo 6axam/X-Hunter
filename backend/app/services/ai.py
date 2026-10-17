@@ -46,8 +46,9 @@ class AiService:
         pricing = model_info.get("pricing") or {}
         prompt_price = self._price(pricing.get("prompt"))
         completion_price = self._price(pricing.get("completion"))
-        request_price = self._price(pricing.get("request"))
-        if prompt_price is None or completion_price is None or request_price is None:
+        # OpenRouter omits ``request`` when a model has no fixed per-request charge.
+        request_price = self._price(pricing.get("request")) or Decimal("0")
+        if prompt_price is None or completion_price is None:
             raise ValueError("OpenRouter model price is unknown")
         reserve = max(
             Decimal("0.000001"),

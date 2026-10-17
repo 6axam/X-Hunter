@@ -127,7 +127,7 @@ async def test_ai_evaluation_is_persisted_with_value_label(db_session: AsyncSess
             OpenRouterClient("secret", http),
             {
                 "id": "vendor/model",
-                "pricing": {"prompt": "0.000001", "completion": "0.000002", "request": "0"},
+                "pricing": {"prompt": "0.000001", "completion": "0.000002"},
             },
         )
     assert evaluation.status == "complete"

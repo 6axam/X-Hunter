@@ -320,8 +320,10 @@ class ResearchService:
     ) -> None:
         prompt_price = AiService._price((model_info.get("pricing") or {}).get("prompt"))
         completion_price = AiService._price((model_info.get("pricing") or {}).get("completion"))
-        request_price = AiService._price((model_info.get("pricing") or {}).get("request"))
-        if prompt_price is None or completion_price is None or request_price is None:
+        # The catalog omits ``request`` for models without a fixed request charge.
+        pricing = model_info.get("pricing") or {}
+        request_price = AiService._price(pricing.get("request")) or Decimal("0")
+        if prompt_price is None or completion_price is None:
             session.status, session.stage, session.error_code = (
                 "failed",
                 "pricing_unknown",
