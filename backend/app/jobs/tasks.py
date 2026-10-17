@@ -13,11 +13,12 @@ from app.ai.openrouter import OpenRouterClient
 from app.config import get_settings
 from app.database import engine, session_factory
 from app.jobs.celery_app import celery_app
-from app.models import ExportJob, Listing, ListingVersion, Search, SearchMatch
+from app.models import ExportJob, Listing, ListingVersion, ResearchSession, Search, SearchMatch
 from app.models.base import utcnow
 from app.notifications.telegram import TelegramOutbox
 from app.services.ai import AiService
 from app.services.media import process_pending_media
+from app.services.research import ResearchService
 from app.services.runs import RunService
 from app.services.scanning import ScanService
 from app.sources.olx import OlxSource
@@ -83,6 +84,34 @@ async def _run_search(search_id: UUID) -> str:
             max_pages=settings.scan_max_pages,
         ).start(search)
         return run.status
+
+
+@celery_app.task(name="app.jobs.tasks.run_research")
+def run_research(session_id: str) -> str:
+    return _run_task(_run_research(UUID(session_id)))
+
+
+async def _run_research(session_id: UUID) -> str:
+    settings = get_settings()
+    async with session_factory() as db:
+        return await ResearchService(db, settings).run(session_id)
+
+
+@celery_app.task(name="app.jobs.tasks.schedule_research")
+def schedule_research() -> int:
+    return _run_task(_schedule_research())
+
+
+async def _schedule_research() -> int:
+    async with session_factory() as db:
+        sessions = list(
+            await db.scalars(
+                select(ResearchSession).where(ResearchSession.status == "queued").limit(20)
+            )
+        )
+        for session in sessions:
+            run_research.delay(str(session.id))
+        return len(sessions)
 
 
 @celery_app.task(name="app.jobs.tasks.deliver_notifications")

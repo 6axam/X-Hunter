@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8080"
     openrouter_api_key: str | None = None
     openrouter_model: str | None = None
+    openrouter_research_model: str | None = None
     openrouter_daily_budget_usd: str = "1.00"
 
     @field_validator("owner_telegram_id", mode="before")

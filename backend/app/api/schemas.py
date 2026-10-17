@@ -168,3 +168,71 @@ class FilterSchemaResponse(BaseModel):
         if any("key" not in item for item in value):
             raise ValueError("Every filter field requires a key")
         return value
+
+
+class ResearchCreateRequest(BaseModel):
+    query: str = Field(min_length=3, max_length=2000)
+    marketplaces: list[str] = Field(default_factory=lambda: ["olx"], max_length=8)
+    max_items: int = Field(default=15, ge=1, le=50)
+    budget_usd: str = Field(default="0.10", pattern=r"^\d+(\.\d{1,6})?$")
+    model: str | None = Field(default=None, min_length=3, max_length=160)
+
+
+class ResearchActionRequest(BaseModel):
+    action: str = Field(pattern="^(pause|resume|cancel)$")
+
+
+class ResearchSessionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    query: str
+    marketplaces: list[str]
+    model: str | None
+    status: str
+    stage: str
+    max_items: int
+    cursor: int
+    processed_count: int
+    accepted_count: int
+    rejected_count: int
+    compact_memory: dict[str, Any]
+    budget_usd: str
+    estimated_cost_usd: str
+    actual_cost_usd: str
+    error_code: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResearchItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    listing_id: UUID
+    sequence: int
+    status: str
+    score: int | None
+    confidence: str | None
+    recommendation: str | None
+    listing_snapshot: dict[str, Any]
+    analysis: dict[str, Any]
+    input_tokens: int | None
+    output_tokens: int | None
+    cached_input_tokens: int | None
+    estimated_cost_usd: str | None
+    actual_cost_usd: str | None
+    error_code: str | None
+    created_at: datetime
+
+
+class ResearchEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    kind: str
+    message: str
+    payload: dict[str, Any]
+    created_at: datetime

@@ -14,6 +14,10 @@ celery_app.conf.update(
             "task": "app.jobs.tasks.schedule_due_searches",
             "schedule": 60.0,
         },
+        "schedule-research": {
+            "task": "app.jobs.tasks.schedule_research",
+            "schedule": 60.0,
+        },
         "deliver-notifications": {
             "task": "app.jobs.tasks.deliver_notifications",
             "schedule": 10.0,

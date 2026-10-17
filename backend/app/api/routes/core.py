@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E501
+from decimal import Decimal, InvalidOperation
 from typing import Annotated
 from uuid import UUID
 
@@ -18,6 +20,11 @@ from app.api.schemas import (
     FindingStatePatch,
     FindingStateResponse,
     MeResponse,
+    ResearchActionRequest,
+    ResearchCreateRequest,
+    ResearchEventResponse,
+    ResearchItemResponse,
+    ResearchSessionResponse,
     ScanRunResponse,
     SearchCreateRequest,
     SearchDraftPatch,
@@ -33,6 +40,7 @@ from app.models.base import utcnow
 from app.services.exports import ExportService
 from app.services.findings import FindingService
 from app.services.media import owner_can_access_media
+from app.services.research import MARKETPLACES, ResearchService
 from app.services.runs import RunService
 from app.services.searches import SearchService
 from app.sources.olx import OlxSource
@@ -51,6 +59,13 @@ def search_service(db: DatabaseSession, settings: Annotated[Settings, Depends(ge
 
 
 Searches = Annotated[SearchService, Depends(search_service)]
+
+
+def research_service(db: DatabaseSession, settings: Annotated[Settings, Depends(get_settings)]):
+    return ResearchService(db, settings)
+
+
+Research = Annotated[ResearchService, Depends(research_service)]
 
 
 @router.get("/me", response_model=MeResponse, tags=["owner"])
@@ -87,6 +102,109 @@ async def filter_schemas(_: CurrentUser) -> FilterSchemaResponse:
             },
         ]
     )
+
+
+@router.get("/marketplaces", tags=["research"])
+async def marketplaces(_: CurrentUser) -> dict:
+    """Capabilities registry; only sources marked available may be queried by the MVP runner."""
+    return {"marketplaces": [{"id": key, **value} for key, value in MARKETPLACES.items()]}
+
+
+@router.get("/research-sessions", response_model=list[ResearchSessionResponse], tags=["research"])
+async def list_research_sessions(
+    user: CurrentUser, research: Research
+) -> list[ResearchSessionResponse]:
+    return [research_response(item) for item in await research.list(user)]
+
+
+@router.post(
+    "/research-sessions", response_model=ResearchSessionResponse, status_code=201, tags=["research"]
+)
+async def create_research_session(
+    body: ResearchCreateRequest, user: CurrentUser, research: Research
+) -> ResearchSessionResponse:
+    try:
+        budget = Decimal(body.budget_usd)
+    except InvalidOperation as exc:
+        raise AppError(422, "invalid_budget", "Лимит расходов имеет неверный формат.") from exc
+    session = await research.create(
+        user,
+        query=body.query,
+        marketplaces=body.marketplaces,
+        max_items=body.max_items,
+        budget_usd=budget,
+        model=body.model,
+    )
+    if session.status == "queued":
+        from app.jobs.tasks import run_research
+
+        run_research.delay(str(session.id))
+    return research_response(session)
+
+
+@router.get(
+    "/research-sessions/{session_id}", response_model=ResearchSessionResponse, tags=["research"]
+)
+async def get_research_session(
+    session_id: UUID, user: CurrentUser, research: Research
+) -> ResearchSessionResponse:
+    return research_response(await research.get(user, session_id))
+
+
+@router.post(
+    "/research-sessions/{session_id}/actions",
+    response_model=ResearchSessionResponse,
+    tags=["research"],
+)
+async def research_action(
+    session_id: UUID, body: ResearchActionRequest, user: CurrentUser, research: Research
+) -> ResearchSessionResponse:
+    session = await research.action(user, session_id, body.action)
+    if body.action == "resume":
+        from app.jobs.tasks import run_research
+
+        run_research.delay(str(session.id))
+    return research_response(session)
+
+
+@router.get(
+    "/research-sessions/{session_id}/items",
+    response_model=list[ResearchItemResponse],
+    tags=["research"],
+)
+async def research_items(
+    session_id: UUID, user: CurrentUser, research: Research
+) -> list[ResearchItemResponse]:
+    return [research_item_response(item) for item in await research.items(user, session_id)]
+
+
+@router.get(
+    "/research-sessions/{session_id}/events",
+    response_model=list[ResearchEventResponse],
+    tags=["research"],
+)
+async def research_events(
+    session_id: UUID, user: CurrentUser, research: Research
+) -> list[ResearchEventResponse]:
+    return [
+        ResearchEventResponse.model_validate(item)
+        for item in await research.events(user, session_id)
+    ]
+
+
+def research_response(item) -> ResearchSessionResponse:
+    data = ResearchSessionResponse.model_validate(item).model_dump()
+    for key in ("budget_usd", "estimated_cost_usd", "actual_cost_usd"):
+        data[key] = str(data[key])
+    return ResearchSessionResponse(**data)
+
+
+def research_item_response(item) -> ResearchItemResponse:
+    data = ResearchItemResponse.model_validate(item).model_dump()
+    for key in ("confidence", "estimated_cost_usd", "actual_cost_usd"):
+        if data[key] is not None:
+            data[key] = str(data[key])
+    return ResearchItemResponse(**data)
 
 
 @router.post(

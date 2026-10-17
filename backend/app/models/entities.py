@@ -170,6 +170,72 @@ class AiEvaluation(UuidPrimaryKeyMixin, TimestampMixin, Base):
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
 
 
+class ResearchSession(UuidPrimaryKeyMixin, TimestampMixin, Base):
+    """A resumable, owner-scoped AI buying research run."""
+
+    __tablename__ = "research_sessions"
+    __table_args__ = (Index("ix_research_owner_status", "owner_id", "status", "updated_at"),)
+
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    query: Mapped[str] = mapped_column(Text)
+    marketplaces: Mapped[list[str]] = mapped_column(SAJSON, default=list)
+    model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="queued", index=True)
+    stage: Mapped[str] = mapped_column(String(80), default="queued")
+    max_items: Mapped[int] = mapped_column(Integer, default=20)
+    cursor: Mapped[int] = mapped_column(Integer, default=0)
+    processed_count: Mapped[int] = mapped_column(Integer, default=0)
+    accepted_count: Mapped[int] = mapped_column(Integer, default=0)
+    rejected_count: Mapped[int] = mapped_column(Integer, default=0)
+    compact_memory: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    budget_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal("0.10"))
+    estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal("0"))
+    actual_cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal("0"))
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ResearchItem(UuidPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "research_items"
+    __table_args__ = (
+        UniqueConstraint("session_id", "listing_id"),
+        Index("ix_research_items_session_rank", "session_id", "score", "created_at"),
+    )
+
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("research_sessions.id", ondelete="CASCADE"), index=True
+    )
+    listing_id: Mapped[UUID] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
+    recommendation: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    listing_snapshot: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    analysis: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    actual_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class ResearchEvent(UuidPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "research_events"
+    __table_args__ = (Index("ix_research_events_session_created", "session_id", "created_at"),)
+
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("research_sessions.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(48), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+
+
 class Media(UuidPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "media"
     __table_args__ = (UniqueConstraint("listing_id", "position"),)

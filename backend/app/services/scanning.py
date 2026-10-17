@@ -34,6 +34,67 @@ class ScanService:
         self.db = db
 
     async def ingest(self, search: Search, candidate: ListingCandidate) -> tuple[SearchMatch, bool]:
+        listing, version, is_new_listing, previous_version = await self.upsert_listing(candidate)
+        now = utcnow()
+        decision: FilterDecision = evaluate(candidate, search.specification, search.rules)
+        match = await self.db.scalar(
+            select(SearchMatch).where(
+                SearchMatch.search_id == search.id,
+                SearchMatch.listing_id == listing.id,
+            )
+        )
+        is_new_match = match is None
+        if match is None:
+            match = SearchMatch(
+                search_id=search.id,
+                listing_id=listing.id,
+                search_revision=search.revision,
+                listing_version_id=version.id,
+                decision=decision.decision,
+                reasons=decision.reasons,
+                first_seen_at=now,
+                last_seen_at=now,
+            )
+            self.db.add(match)
+        else:
+            match.search_revision = search.revision
+            match.listing_version_id = version.id
+            match.decision = decision.decision
+            match.reasons = decision.reasons
+            match.last_seen_at = now
+
+        baseline = search.baseline_completed_at is None
+        if decision.decision == "match" and is_new_match and not baseline:
+            await self._event(
+                search, listing, "new_listing", f"new:{search.owner_id}:{listing.id}", candidate
+            )
+
+        threshold = int(search.event_settings.get("price_drop_percent", 5))
+        if (
+            decision.decision == "match"
+            and search.event_settings.get("price_drop_enabled", False)
+            and previous_version is not None
+            and previous_version.price is not None
+            and candidate.price is not None
+            and candidate.price < previous_version.price
+        ):
+            reference = await self._notified_price(search, listing) or previous_version.price
+            percent = int((reference - candidate.price) * 100 / reference)
+            if percent >= threshold:
+                await self._event(
+                    search,
+                    listing,
+                    "price_drop",
+                    f"price:{search.owner_id}:{listing.id}:{candidate.price}",
+                    candidate,
+                    {"previous_price": str(reference), "drop_percent": percent},
+                )
+        await self.db.commit()
+        return match, is_new_listing
+
+    async def upsert_listing(
+        self, candidate: ListingCandidate
+    ) -> tuple[Listing, ListingVersion, bool, ListingVersion | None]:
         now = utcnow()
         listing = await self.db.scalar(
             select(Listing).where(
@@ -103,65 +164,8 @@ class ScanService:
                     )
                 )
 
-        decision: FilterDecision = evaluate(candidate, search.specification, search.rules)
-        match = await self.db.scalar(
-            select(SearchMatch).where(
-                SearchMatch.search_id == search.id,
-                SearchMatch.listing_id == listing.id,
-            )
-        )
-        is_new_match = match is None
-        if match is None:
-            match = SearchMatch(
-                search_id=search.id,
-                listing_id=listing.id,
-                search_revision=search.revision,
-                listing_version_id=version.id,
-                decision=decision.decision,
-                reasons=decision.reasons,
-                first_seen_at=now,
-                last_seen_at=now,
-            )
-            self.db.add(match)
-        else:
-            match.search_revision = search.revision
-            match.listing_version_id = version.id
-            match.decision = decision.decision
-            match.reasons = decision.reasons
-            match.last_seen_at = now
-
-        baseline = search.baseline_completed_at is None
-        if decision.decision == "match" and is_new_match and not baseline:
-            await self._event(
-                search,
-                listing,
-                "new_listing",
-                f"new:{search.owner_id}:{listing.id}",
-                candidate,
-            )
-
-        threshold = int(search.event_settings.get("price_drop_percent", 5))
-        if (
-            decision.decision == "match"
-            and search.event_settings.get("price_drop_enabled", False)
-            and previous_version is not None
-            and previous_version.price is not None
-            and candidate.price is not None
-            and candidate.price < previous_version.price
-        ):
-            reference = await self._notified_price(search, listing) or previous_version.price
-            percent = int((reference - candidate.price) * 100 / reference)
-            if percent >= threshold:
-                await self._event(
-                    search,
-                    listing,
-                    "price_drop",
-                    f"price:{search.owner_id}:{listing.id}:{candidate.price}",
-                    candidate,
-                    {"previous_price": str(reference), "drop_percent": percent},
-                )
-        await self.db.commit()
-        return match, is_new_listing
+        await self.db.flush()
+        return listing, version, is_new_listing, previous_version
 
     async def _notified_price(self, search: Search, listing: Listing) -> Decimal | None:
         event = await self.db.scalar(
