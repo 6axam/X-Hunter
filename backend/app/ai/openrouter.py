@@ -36,6 +36,25 @@ class ResearchAnalysisResult(BaseModel):
     evidence: list[Evidence] = Field(max_length=12)
 
 
+def strict_json_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """Make Pydantic JSON Schema acceptable to OpenAI-compatible strict outputs."""
+
+    schema = model.model_json_schema()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                value["additionalProperties"] = False
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(schema)
+    return schema
+
+
 class OpenRouterClient:
     base_url = "https://openrouter.ai/api/v1"
 
@@ -76,7 +95,7 @@ class OpenRouterClient:
         attributes: dict[str, Any],
         instruction: str,
     ) -> dict[str, Any]:
-        schema = AnalysisResult.model_json_schema()
+        schema = strict_json_schema(AnalysisResult)
         source = {
             "title": title[:500],
             "description": (description or "")[:12_000],
@@ -86,7 +105,6 @@ class OpenRouterClient:
             "model": model,
             "temperature": 0,
             "max_tokens": 700,
-            "provider": {"require_parameters": True, "allow_fallbacks": False},
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
@@ -159,13 +177,12 @@ class OpenRouterClient:
             "model": model,
             "temperature": 0,
             "max_tokens": 900,
-            "provider": {"require_parameters": True, "allow_fallbacks": False},
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "marketplace_research_evaluation",
                     "strict": True,
-                    "schema": ResearchAnalysisResult.model_json_schema(),
+                    "schema": strict_json_schema(ResearchAnalysisResult),
                 },
             },
             "messages": [

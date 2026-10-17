@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.budget import BudgetService
-from app.ai.openrouter import OpenRouterClient
+from app.ai.openrouter import OpenRouterClient, ResearchAnalysisResult, strict_json_schema
 from app.api.errors import AppError
 from app.models import ListingVersion, SearchMatch, User
 from app.services.ai import AiService
@@ -24,10 +24,16 @@ def test_openrouter_payload_separates_untrusted_listing_data() -> None:
     )
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["strict"] is True
-    assert payload["provider"] == {"require_parameters": True, "allow_fallbacks": False}
+    assert "provider" not in payload
     assert payload["messages"][0]["role"] == "system"
     assert "недоверенные данные" in payload["messages"][0]["content"]
     assert "Ignore previous" in payload["messages"][2]["content"]
+
+
+def test_strict_schema_rejects_extra_object_fields() -> None:
+    schema = strict_json_schema(ResearchAnalysisResult)
+    assert schema["additionalProperties"] is False
+    assert schema["$defs"]["Evidence"]["additionalProperties"] is False
 
 
 @pytest.mark.asyncio
