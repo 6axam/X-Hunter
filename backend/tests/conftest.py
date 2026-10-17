@@ -44,6 +44,9 @@ async def api_client(db_session: AsyncSession) -> AsyncIterator[httpx.AsyncClien
             owner_telegram_id=111,
             database_url="sqlite+aiosqlite://",
             source_http_enabled=False,
+            openrouter_api_key=None,
+            openrouter_model=None,
+            openrouter_research_model=None,
         )
 
     app.dependency_overrides[get_db] = test_db

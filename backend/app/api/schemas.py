@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -197,9 +198,9 @@ class ResearchSessionResponse(BaseModel):
     accepted_count: int
     rejected_count: int
     compact_memory: dict[str, Any]
-    budget_usd: str
-    estimated_cost_usd: str
-    actual_cost_usd: str
+    budget_usd: Decimal
+    estimated_cost_usd: Decimal
+    actual_cost_usd: Decimal
     error_code: str | None
     started_at: datetime | None
     finished_at: datetime | None
@@ -215,15 +216,15 @@ class ResearchItemResponse(BaseModel):
     sequence: int
     status: str
     score: int | None
-    confidence: str | None
+    confidence: Decimal | None
     recommendation: str | None
     listing_snapshot: dict[str, Any]
     analysis: dict[str, Any]
     input_tokens: int | None
     output_tokens: int | None
     cached_input_tokens: int | None
-    estimated_cost_usd: str | None
-    actual_cost_usd: str | None
+    estimated_cost_usd: Decimal | None
+    actual_cost_usd: Decimal | None
     error_code: str | None
     created_at: datetime
 

@@ -15,7 +15,15 @@ async def test_research_waits_for_openrouter_configuration(db_session: AsyncSess
     await db_session.commit()
     await db_session.refresh(owner)
 
-    service = ResearchService(db_session, Settings(source_http_enabled=False))
+    service = ResearchService(
+        db_session,
+        Settings(
+            source_http_enabled=False,
+            openrouter_api_key=None,
+            openrouter_model=None,
+            openrouter_research_model=None,
+        ),
+    )
     session = await service.create(
         owner,
         query="электровелосипед до 30000 грн",
@@ -36,7 +44,10 @@ async def test_research_rejects_unknown_marketplace(db_session: AsyncSession) ->
     db_session.add(owner)
     await db_session.commit()
     await db_session.refresh(owner)
-    service = ResearchService(db_session, Settings())
+    service = ResearchService(
+        db_session,
+        Settings(openrouter_api_key=None, openrouter_model=None, openrouter_research_model=None),
+    )
 
     with pytest.raises(Exception) as error:
         await service.create(
