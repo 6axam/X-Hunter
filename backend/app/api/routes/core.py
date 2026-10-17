@@ -194,7 +194,13 @@ async def research_events(
 
 def research_response(item) -> ResearchSessionResponse:
     data = ResearchSessionResponse.model_validate(item).model_dump()
-    for key in ("budget_usd", "estimated_cost_usd", "actual_cost_usd"):
+    for key in (
+        "budget_usd",
+        "estimated_cost_usd",
+        "actual_cost_usd",
+        "planning_estimated_cost_usd",
+        "planning_actual_cost_usd",
+    ):
         data[key] = str(data[key])
     return ResearchSessionResponse(**data)
 

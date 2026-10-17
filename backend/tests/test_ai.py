@@ -6,7 +6,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.budget import BudgetService
-from app.ai.openrouter import OpenRouterClient, ResearchAnalysisResult, strict_json_schema
+from app.ai.openrouter import (
+    OpenRouterClient,
+    ResearchAnalysisResult,
+    SearchPlan,
+    strict_json_schema,
+)
 from app.api.errors import AppError
 from app.models import ListingVersion, SearchMatch, User
 from app.services.ai import AiService
@@ -47,6 +52,41 @@ def test_research_payload_has_room_for_complete_structured_response() -> None:
         compact_memory={"leaders": []},
     )
     assert payload["max_tokens"] == 2400
+
+
+def test_search_planner_keeps_natural_language_out_of_olx_query_fields() -> None:
+    query = "синкпад до 5к под домашний сервер на несколько доккер контейнеров для питон ботов"
+    payload = OpenRouterClient("secret").build_search_plan_payload(
+        model="vendor/model", query=query
+    )
+
+    assert payload["max_tokens"] == 800
+    assert query in payload["messages"][1]["content"]
+    assert "не вставляй назначение" in payload["messages"][0]["content"].casefold()
+    assert payload["response_format"]["json_schema"]["strict"] is True
+
+
+def test_search_plan_supports_thinkpad_budget_and_compact_queries() -> None:
+    plan = SearchPlan.model_validate(
+        {
+            "product_type": "laptop",
+            "brand": "Lenovo",
+            "model_family": "ThinkPad",
+            "max_price": 5000,
+            "currency": "UAH",
+            "purpose": "Домашний Linux-сервер",
+            "workloads": ["Docker", "Python bots"],
+            "search_queries": ["Lenovo ThinkPad", "ThinkPad T480", "Lenovo ThinkPad"],
+            "hard_requirements": ["Ноутбук Lenovo ThinkPad", "Цена не выше 5000 UAH"],
+            "soft_requirements": ["Подходит для Linux"],
+        }
+    )
+
+    assert plan.brand == "Lenovo"
+    assert plan.model_family == "ThinkPad"
+    assert plan.max_price == 5000
+    assert plan.search_queries == ["Lenovo ThinkPad", "ThinkPad T480"]
+    assert all("доккер" not in item.casefold() for item in plan.search_queries)
 
 
 @pytest.mark.asyncio

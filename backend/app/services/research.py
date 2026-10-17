@@ -234,6 +234,9 @@ class ResearchService:
             await self.db.commit()
             return session.status
 
+        if not await self._ensure_search_plan(session, model_info):
+            return session.status
+
         session.status, session.stage, session.started_at, session.lease_expires_at = (
             "running",
             "collecting_olx",
@@ -307,6 +310,111 @@ class ResearchService:
             },
         )
         return session.status
+
+    async def _ensure_search_plan(
+        self, session: ResearchSession, model_info: dict[str, Any]
+    ) -> bool:
+        """Create exactly one durable plan before any marketplace URL is built."""
+        if session.search_plan:
+            return True
+        pricing = model_info.get("pricing") or {}
+        prompt_price = AiService._price(pricing.get("prompt"))
+        completion_price = AiService._price(pricing.get("completion"))
+        request_price = AiService._price(pricing.get("request")) or Decimal("0")
+        if prompt_price is None or completion_price is None:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "failed",
+                "planning_pricing_unknown",
+                "pricing_unknown",
+                None,
+            )
+            await self._event(
+                session, "planning_error", "Невозможно безопасно оценить цену планирования."
+            )
+            await self.db.commit()
+            return False
+        estimate = prompt_price * 1_200 + completion_price * 800 + request_price
+        if session.actual_cost_usd + estimate > session.budget_usd:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "budget_exhausted",
+                "planning_budget_exhausted",
+                "budget_exhausted",
+                None,
+            )
+            await self._event(session, "budget", "Лимит расходов не покрывает планирование поиска.")
+            await self.db.commit()
+            return False
+        session.stage = "planning_search"
+        await self._event(session, "planning", "ИИ формирует поисковый план до обращения к OLX.")
+        await self.db.commit()
+        try:
+            client = OpenRouterClient(self.settings.openrouter_api_key or "")
+            plan, usage = await client.plan_search(model=session.model or "", query=session.query)
+        except Exception as exc:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "failed",
+                "planning_failed",
+                "planning_failed",
+                None,
+            )
+            await self._event(
+                session,
+                "planning_error",
+                "Не удалось сформировать поисковый план; OLX не запускался.",
+                {"type": type(exc).__name__},
+            )
+            await self.db.commit()
+            logger.warning(
+                "Search planning failed",
+                extra={
+                    "research_id": session.id,
+                    "event": "search_planning_failed",
+                    "status": type(exc).__name__,
+                },
+            )
+            return False
+        actual = (
+            prompt_price * usage["prompt_tokens"]
+            + completion_price * usage["completion_tokens"]
+            + request_price
+        )
+        session.search_plan = plan.model_dump(mode="json")
+        session.planning_estimated_cost_usd = estimate
+        session.planning_actual_cost_usd = actual
+        session.planning_input_tokens = usage["prompt_tokens"]
+        session.planning_output_tokens = usage["completion_tokens"]
+        session.estimated_cost_usd += estimate
+        session.actual_cost_usd += actual
+        session.lease_expires_at = utcnow() + timedelta(minutes=5)
+        if plan.needs_clarification:
+            session.status, session.stage, session.lease_expires_at = (
+                "needs_clarification",
+                "needs_clarification",
+                None,
+            )
+            await self._event(
+                session,
+                "clarification",
+                plan.clarification_question or "Уточните, какой тип товара нужен.",
+                {"plan": session.search_plan},
+            )
+        else:
+            await self._event(
+                session,
+                "planned",
+                "ИИ сформировал поисковые фразы и ограничения.",
+                {"plan": session.search_plan},
+            )
+        await self.db.commit()
+        logger.info(
+            "Search plan saved",
+            extra={
+                "research_id": session.id,
+                "event": "search_planning_completed",
+                "status": f"queries={len(plan.search_queries)}",
+            },
+        )
+        return not plan.needs_clarification
 
     async def _collect_olx(self, session: ResearchSession) -> list[ListingCandidate] | None:
         url = f"https://www.olx.ua/uk/list/q-{quote(session.query, safe='')}/"

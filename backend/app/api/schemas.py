@@ -197,10 +197,18 @@ class ResearchSessionResponse(BaseModel):
     processed_count: int
     accepted_count: int
     rejected_count: int
+    rejected_before_analysis_count: int
+    collected_count: int
+    search_plan: dict[str, Any]
+    executed_searches: list[dict[str, Any]]
     compact_memory: dict[str, Any]
     budget_usd: Decimal
     estimated_cost_usd: Decimal
     actual_cost_usd: Decimal
+    planning_estimated_cost_usd: Decimal
+    planning_actual_cost_usd: Decimal
+    planning_input_tokens: int
+    planning_output_tokens: int
     error_code: str | None
     started_at: datetime | None
     finished_at: datetime | None
