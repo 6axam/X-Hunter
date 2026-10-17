@@ -7,6 +7,10 @@ from typing import Annotated, Any, Literal
 import httpx
 from pydantic import BaseModel, Field
 
+from app.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class Evidence(BaseModel):
     field: Literal["title", "description", "attributes"]
@@ -81,7 +85,12 @@ class OpenRouterClient:
                 },
             )
             response.raise_for_status()
-            return list(response.json().get("data", []))
+            models = list(response.json().get("data", []))
+            logger.info(
+                "OpenRouter model catalog received",
+                extra={"event": "openrouter_models", "status": f"count={len(models)}"},
+            )
+            return models
         finally:
             if own_client:
                 await client.aclose()
@@ -219,12 +228,29 @@ class OpenRouterClient:
         try:
             total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "cached_input_tokens": 0}
             for attempt in range(2):
+                logger.info(
+                    "OpenRouter research request started",
+                    extra={
+                        "event": "openrouter_research_request",
+                        "status": f"attempt={attempt + 1}",
+                    },
+                )
                 response = await client.post(
                     f"{self.base_url}/chat/completions", headers=self.headers, json=payload
                 )
                 response.raise_for_status()
                 body = response.json()
                 usage = self._usage(body.get("usage") or {})
+                logger.info(
+                    "OpenRouter research response received",
+                    extra={
+                        "event": "openrouter_research_response",
+                        "status": (
+                            f"attempt={attempt + 1}; prompt_tokens={usage['prompt_tokens']}; "
+                            f"completion_tokens={usage['completion_tokens']}"
+                        ),
+                    },
+                )
                 for key, value in usage.items():
                     total_usage[key] += value
                 result = ResearchAnalysisResult.model_validate_json(

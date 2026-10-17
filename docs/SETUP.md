@@ -76,6 +76,27 @@ API применяет Alembic-миграции перед стартом. `/hea
 
 Если прямой HTTP-доступ получает `403`, можно включить браузерный источник: `SOURCE_BROWSER_ENABLED=true`. Он использует Chromium в отдельном browser worker-процессе и всё равно возвращает `blocked`, если OLX показывает CAPTCHA или страницу проверки. Автоматический обход CAPTCHA не выполняется.
 
+### Диагностика работы
+
+После `docker compose up -d` приложение сохраняет JSON-логи в постоянный Docker volume `log_data`. Они переживают перезапуск контейнеров. В строках есть время, сервис, этап исследования, ID исследования/объявления, HTTP-статусы OLX, расход токенов и безопасные ошибки. Ключи, Telegram-токены и полное содержимое запросов в них не пишутся.
+
+Текущий поток сервиса:
+
+```bash
+docker compose logs -f worker
+docker compose logs -f api
+docker compose logs -f bot
+```
+
+Сохранённые файлы:
+
+```bash
+docker compose exec worker sh -c 'ls -lah /data/logs && tail -n 100 /data/logs/worker.log'
+docker compose exec api sh -c 'tail -n 100 /data/logs/api.log'
+```
+
+Для ИИ-поиска в `worker.log` ищите `research_id` или события `research_claimed`, `olx_browser_response`, `research_item_started`, `openrouter_research_response`, `research_item_completed`, `research_item_failed`. Для разбора можно прислать последние строки вокруг нужного времени.
+
 OpenRouter без ключа выключен. При включении UI получает актуальный список моделей и цены через API; модель должна поддерживать structured outputs. Модель и тариф не зафиксированы навсегда в исходном коде.
 
 ## 5. Локальные панели управления

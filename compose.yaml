@@ -8,6 +8,7 @@ x-backend: &backend
   volumes:
     - media_data:/data/media
     - export_data:/data/exports
+    - log_data:/data/logs
   depends_on:
     postgres:
       condition: service_healthy
@@ -95,6 +96,7 @@ volumes:
   redis_data:
   media_data:
   export_data:
+  log_data:
   caddy_data:
   caddy_config:
   portainer_data:

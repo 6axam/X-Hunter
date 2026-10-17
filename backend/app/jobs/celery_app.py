@@ -1,10 +1,15 @@
+import sys
+
 from celery import Celery
 
 from app.config import get_settings
+from app.logging import configure_logging
 
 settings = get_settings()
+configure_logging(settings, "scheduler" if "beat" in sys.argv else "worker")
 celery_app = Celery("olx_hunter", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.update(
+    worker_hijack_root_logger=False,
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],

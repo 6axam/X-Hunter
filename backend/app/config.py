@@ -29,6 +29,10 @@ class Settings(BaseSettings):
         default_factory=lambda: ["olxcdn.com"]
     )
     export_root: Path = Path("./exports")
+    log_root: Path = Path("/data/logs")
+    log_level: str = "INFO"
+    log_max_bytes: int = 5_000_000
+    log_backup_count: int = 5
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173"]
     )

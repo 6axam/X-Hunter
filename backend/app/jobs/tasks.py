@@ -13,6 +13,7 @@ from app.ai.openrouter import OpenRouterClient
 from app.config import get_settings
 from app.database import engine, session_factory
 from app.jobs.celery_app import celery_app
+from app.logging import get_logger
 from app.models import ExportJob, Listing, ListingVersion, ResearchSession, Search, SearchMatch
 from app.models.base import utcnow
 from app.notifications.telegram import TelegramOutbox
@@ -22,6 +23,8 @@ from app.services.research import ResearchService
 from app.services.runs import RunService
 from app.services.scanning import ScanService
 from app.sources.olx import OlxSource
+
+logger = get_logger(__name__)
 
 
 def _run_task[Result](coroutine: Coroutine[None, None, Result]) -> Result:
@@ -38,7 +41,11 @@ def _run_task[Result](coroutine: Coroutine[None, None, Result]) -> Result:
         finally:
             await engine.dispose()
 
-    return asyncio.run(runner())
+    try:
+        return asyncio.run(runner())
+    except Exception:
+        logger.exception("Background task crashed", extra={"event": "task_crashed"})
+        raise
 
 
 @celery_app.task(name="app.jobs.tasks.schedule_due_searches")
@@ -93,8 +100,16 @@ def run_research(session_id: str) -> str:
 
 async def _run_research(session_id: UUID) -> str:
     settings = get_settings()
+    logger.info(
+        "Research task started", extra={"research_id": session_id, "event": "research_task_started"}
+    )
     async with session_factory() as db:
-        return await ResearchService(db, settings).run(session_id)
+        status = await ResearchService(db, settings).run(session_id)
+    logger.info(
+        "Research task finished",
+        extra={"research_id": session_id, "event": "research_task_finished", "status": status},
+    )
+    return status
 
 
 @celery_app.task(name="app.jobs.tasks.schedule_research")

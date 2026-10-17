@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.openrouter import OpenRouterClient
 from app.api.errors import AppError
 from app.config import Settings
+from app.logging import get_logger
 from app.models import ListingVersion, ResearchEvent, ResearchItem, ResearchSession, User
 from app.models.base import utcnow
 from app.services.ai import AiService
@@ -25,6 +26,7 @@ MARKETPLACES = {
     "prom": {"label": "Prom.ua", "available": False, "reason": "Адаптер ещё не проверен"},
     "rozetka": {"label": "Rozetka", "available": False, "reason": "Адаптер ещё не проверен"},
 }
+logger = get_logger(__name__)
 
 
 class ResearchService:
@@ -184,11 +186,23 @@ class ResearchService:
             )
         )
         if not claimed.rowcount:
+            logger.info(
+                "Research session skipped because it is not runnable",
+                extra={"research_id": session_id, "event": "research_skipped"},
+            )
             return "skipped"
         await self.db.commit()
         session = await self.db.get(ResearchSession, session_id)
         if not session:
             return "skipped"
+        logger.info(
+            "Research session claimed",
+            extra={
+                "research_id": session.id,
+                "event": "research_claimed",
+                "status": session.status,
+            },
+        )
         if not self.settings.openrouter_api_key or not session.model:
             session.status, session.stage, session.lease_expires_at = (
                 "waiting_configuration",
@@ -230,7 +244,19 @@ class ResearchService:
         await self.db.commit()
         candidates = await self._collect_olx(session)
         if candidates is None:
+            logger.warning(
+                "OLX collection failed",
+                extra={"research_id": session.id, "event": "research_collection_failed"},
+            )
             return session.status
+        logger.info(
+            "OLX candidates collected",
+            extra={
+                "research_id": session.id,
+                "event": "research_candidates_collected",
+                "status": f"count={len(candidates)}",
+            },
+        )
 
         for candidate in candidates:
             await self.db.refresh(session)
@@ -272,6 +298,14 @@ class ResearchService:
             )
             await self._event(session, "completed", "Исследование завершено. Рейтинг сохранён.")
             await self.db.commit()
+        logger.info(
+            "Research session ended",
+            extra={
+                "research_id": session.id,
+                "event": "research_finished",
+                "status": session.status,
+            },
+        )
         return session.status
 
     async def _collect_olx(self, session: ResearchSession) -> list[ListingCandidate] | None:
@@ -301,6 +335,14 @@ class ResearchService:
                 {"code": result.error_code},
             )
             await self.db.commit()
+            logger.warning(
+                "OLX search page unavailable",
+                extra={
+                    "research_id": session.id,
+                    "event": "olx_search_unavailable",
+                    "status": result.error_code or result.state,
+                },
+            )
             return None
         candidates: list[ListingCandidate] = []
         for raw in (result.data or [])[: session.max_items]:
@@ -308,6 +350,15 @@ class ResearchService:
             details = await self.source.fetch_listing(candidate.canonical_url)
             if details.state is SourceState.COMPLETE and details.data:
                 candidate = ListingCandidate.model_validate(details.data)
+            elif details.state is not SourceState.COMPLETE:
+                logger.warning(
+                    "OLX listing detail was unavailable; evaluating search-card data",
+                    extra={
+                        "research_id": session.id,
+                        "event": "olx_listing_detail_unavailable",
+                        "status": details.error_code or details.state,
+                    },
+                )
             candidates.append(candidate)
         return candidates
 
@@ -349,6 +400,14 @@ class ResearchService:
             return
         item.status, session.stage = "running", "analyzing_listing"
         await self.db.commit()
+        logger.info(
+            "AI analysis started for listing",
+            extra={
+                "research_id": session.id,
+                "item_id": item.id,
+                "event": "research_item_started",
+            },
+        )
         try:
             result, usage = await OpenRouterClient(
                 self.settings.openrouter_api_key or ""
@@ -372,6 +431,15 @@ class ResearchService:
                 {"item_id": str(item.id), "type": type(exc).__name__},
             )
             await self.db.commit()
+            logger.warning(
+                "AI analysis failed for listing",
+                extra={
+                    "research_id": session.id,
+                    "item_id": item.id,
+                    "event": "research_item_failed",
+                    "status": type(exc).__name__,
+                },
+            )
             return
         actual = (
             prompt_price * usage["prompt_tokens"]
@@ -405,6 +473,15 @@ class ResearchService:
             {"item_id": str(item.id), "score": result.score},
         )
         await self.db.commit()
+        logger.info(
+            "AI analysis saved for listing",
+            extra={
+                "research_id": session.id,
+                "item_id": item.id,
+                "event": "research_item_completed",
+                "status": f"score={result.score}; recommendation={result.recommendation}",
+            },
+        )
 
     async def _memory(self, session: ResearchSession) -> dict[str, Any]:
         top = (

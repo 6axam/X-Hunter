@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel, Field, model_validator
 
 from app.api.errors import AppError
+from app.logging import get_logger
 from app.sources.base import ListingSource, SourceResult, SourceState
 from app.sources.parser import parse_listing_html, parse_search_html
 
@@ -22,6 +23,7 @@ TRACKING_PARAMETERS = {
     "fbclid",
     "gclid",
 }
+logger = get_logger(__name__)
 
 
 class OlxPageType(StrEnum):
@@ -270,6 +272,10 @@ class OlxSource(ListingSource):
                     response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                     await page.wait_for_timeout(1_000)
                     status = response.status if response is not None else 200
+                    logger.info(
+                        "OLX browser page fetched",
+                        extra={"event": "olx_browser_response", "status": status},
+                    )
                     if status in {404, 410}:
                         return SourceResult(
                             state=SourceState.UNAVAILABLE,
@@ -299,8 +305,13 @@ class OlxSource(ListingSource):
                 finally:
                     await browser.close()
         except PlaywrightTimeoutError:
+            logger.warning("OLX browser timeout", extra={"event": "olx_browser_timeout"})
             return SourceResult(state=SourceState.PARTIAL, error_code="source_browser_timeout")
         except Exception as exc:
+            logger.warning(
+                "OLX browser request failed",
+                extra={"event": "olx_browser_error", "status": type(exc).__name__},
+            )
             if exc.__class__.__name__ in {"Error", "TargetClosedError"}:
                 return SourceResult(
                     state=SourceState.PARTIAL, error_code="source_browser_unavailable"
@@ -324,6 +335,10 @@ class OlxSource(ListingSource):
                         "Accept-Language": "uk-UA,uk;q=0.9,ru;q=0.8",
                     },
                     follow_redirects=False,
+                )
+                logger.info(
+                    "OLX HTTP response received",
+                    extra={"event": "olx_http_response", "status": response.status_code},
                 )
                 if response.status_code in {301, 302, 303, 307, 308}:
                     location = response.headers.get("location")
