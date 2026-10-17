@@ -1,11 +1,15 @@
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.models import User
+from app.models import ResearchSession, User
 from app.services.research import ResearchService
+from app.sources.base import SourceResult, SourceState
+from app.sources.olx import OlxSource
+from app.sources.types import ListingCandidate
 
 
 @pytest.mark.asyncio
@@ -59,3 +63,119 @@ async def test_research_rejects_unknown_marketplace(db_session: AsyncSession) ->
             model=None,
         )
     assert getattr(error.value, "code", None) == "unknown_marketplace"
+
+
+def test_thinkpad_plan_builds_compact_olx_url_with_price_filter() -> None:
+    service = ResearchService(db=None, settings=Settings())  # type: ignore[arg-type]
+    specification = service._search_spec(
+        "Lenovo ThinkPad",
+        {"max_price": 5000, "currency": "UAH"},
+    )
+
+    assert specification is not None
+    assert "q-Lenovo-ThinkPad" in specification.current_url
+    assert "search%5Bfilter_float_price%3Ato%5D=5000" in specification.current_url
+    assert "docker" not in specification.current_url.casefold()
+    assert "python" not in specification.current_url.casefold()
+
+
+def test_thinkpad_prefilter_rejects_unrelated_and_wrong_brand_cards() -> None:
+    service = ResearchService(db=None, settings=Settings())  # type: ignore[arg-type]
+    plan = {
+        "product_type": "laptop",
+        "brand": "Lenovo",
+        "model_family": "ThinkPad",
+        "max_price": 5000,
+    }
+    motorcycle = ListingCandidate(
+        source_listing_id="IDmotor",
+        canonical_url="https://www.olx.ua/d/uk/obyavlenie/motor-IDmotor.html",
+        title="Мотоцикл Honda",
+        price=Decimal("4500"),
+        currency="UAH",
+    )
+    asus = ListingCandidate(
+        source_listing_id="IDasus",
+        canonical_url="https://www.olx.ua/d/uk/obyavlenie/asus-IDasus.html",
+        title="Ноутбук ASUS для роботи",
+        price=Decimal("4500"),
+        currency="UAH",
+    )
+    thinkpad = ListingCandidate(
+        source_listing_id="IDthinkpad",
+        canonical_url="https://www.olx.ua/d/uk/obyavlenie/thinkpad-IDthinkpad.html",
+        title="Ноутбук Lenovo ThinkPad T480",
+        price=Decimal("4500"),
+        currency="UAH",
+    )
+
+    assert service._deterministic_relevance(motorcycle, plan)[0] == "reject"
+    assert service._deterministic_relevance(asus, plan)[0] == "reject"
+    assert service._deterministic_relevance(thinkpad, plan)[0] == "accept"
+
+
+@pytest.mark.asyncio
+async def test_multi_query_collection_deduplicates_candidates(db_session: AsyncSession) -> None:
+    owner = User(telegram_id=222)
+    db_session.add(owner)
+    await db_session.commit()
+    session = ResearchSession(
+        owner_id=owner.id,
+        query="синкпад до 5к",
+        marketplaces=["olx"],
+        model="vendor/model",
+        status="running",
+        stage="collecting_olx",
+        max_items=2,
+        budget_usd=Decimal("0.10"),
+        search_plan={
+            "product_type": "laptop",
+            "brand": "Lenovo",
+            "model_family": "ThinkPad",
+            "max_price": 5000,
+            "currency": "UAH",
+            "search_queries": ["Lenovo ThinkPad", "ThinkPad T480"],
+        },
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    candidate = ListingCandidate(
+        source_listing_id="IDthinkpad",
+        canonical_url="https://www.olx.ua/d/uk/obyavlenie/thinkpad-IDthinkpad.html",
+        title="Lenovo ThinkPad T480",
+        price=Decimal("4500"),
+        currency="UAH",
+    )
+    service = ResearchService(db_session, Settings(scan_max_pages=1))
+    service.source.fetch_search_page = AsyncMock(  # type: ignore[method-assign]
+        return_value=SourceResult(
+            state=SourceState.COMPLETE,
+            data=[candidate.model_dump(mode="json")],
+            metadata={"requested_url": "https://www.olx.ua/uk/list/q-ThinkPad/"},
+        )
+    )
+
+    collected = await service._collect_olx(session)
+
+    assert collected is not None and len(collected) == 1
+    assert session.collected_count == 1
+    assert len(session.executed_searches) == 2
+
+
+@pytest.mark.asyncio
+async def test_olx_rejects_homepage_as_a_search_result() -> None:
+    source = OlxSource(http_enabled=True)
+    specification = source.parse_search_url("https://www.olx.ua/uk/list/q-ThinkPad/").search
+    assert specification is not None
+    source._fetch_html = AsyncMock(  # type: ignore[method-assign]
+        return_value=SourceResult(
+            state=SourceState.COMPLETE,
+            data="<html><body>home</body></html>",
+            metadata={"final_url": "https://www.olx.ua/uk/"},
+        )
+    )
+
+    result = await source.fetch_search_page(specification)
+
+    assert result.error_code == "search_result_mismatch"

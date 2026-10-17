@@ -62,7 +62,11 @@ export type Marketplace = { id: string; label: string; available: boolean; reaso
 export type ResearchSession = {
   id: string; query: string; marketplaces: string[]; model: string | null; status: string; stage: string;
   max_items: number; cursor: number; processed_count: number; accepted_count: number; rejected_count: number;
+  rejected_before_analysis_count: number; collected_count: number;
+  search_plan: { product_type?: string; brand?: string | null; model_family?: string | null; max_price?: number | null; currency?: string | null; purpose?: string | null; search_queries?: string[]; hard_requirements?: string[]; soft_requirements?: string[]; clarification_question?: string | null };
+  executed_searches: Array<{ query: string; url: string; price_to?: string | null; pages: Array<{ page: number; state: string; url: string; final_url?: string | null; results: number; error_code?: string | null }> }>;
   compact_memory: Record<string, unknown>; budget_usd: string; estimated_cost_usd: string; actual_cost_usd: string;
+  planning_estimated_cost_usd: string; planning_actual_cost_usd: string; planning_input_tokens: number; planning_output_tokens: number;
   error_code: string | null; started_at: string | null; finished_at: string | null; created_at: string; updated_at: string;
 };
 
