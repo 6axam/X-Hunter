@@ -79,6 +79,10 @@ def strict_json_schema(model: type[BaseModel]) -> dict[str, Any]:
         if isinstance(value, dict):
             if value.get("type") == "object":
                 value["additionalProperties"] = False
+                # OpenAI-compatible strict schemas require every declared property here,
+                # including nullable fields that Pydantic treats as optional by default.
+                if isinstance(value.get("properties"), dict):
+                    value["required"] = list(value["properties"])
             for child in value.values():
                 visit(child)
         elif isinstance(value, list):

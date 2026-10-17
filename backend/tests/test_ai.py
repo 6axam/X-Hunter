@@ -38,6 +38,7 @@ def test_openrouter_payload_separates_untrusted_listing_data() -> None:
 def test_strict_schema_rejects_extra_object_fields() -> None:
     schema = strict_json_schema(ResearchAnalysisResult)
     assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == set(schema["properties"])
     assert schema["$defs"]["Evidence"]["additionalProperties"] is False
 
 
