@@ -174,7 +174,7 @@ class FilterSchemaResponse(BaseModel):
 class ResearchCreateRequest(BaseModel):
     query: str = Field(min_length=3, max_length=2000)
     marketplaces: list[str] = Field(default_factory=lambda: ["olx"], max_length=8)
-    max_items: int = Field(default=15, ge=1, le=50)
+    max_items: int = Field(default=15, ge=1, le=500)
     budget_usd: str = Field(default="0.10", pattern=r"^\d+(\.\d{1,6})?$")
     model: str | None = Field(default=None, min_length=3, max_length=160)
 

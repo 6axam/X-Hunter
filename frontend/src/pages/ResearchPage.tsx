@@ -35,7 +35,7 @@ function ResearchHome({ draftQuery, onDraftQuery }: { draftQuery: string; onDraf
   const markets = useQuery({ queryKey: ["marketplaces"], queryFn: api.marketplaces });
   const sessions = useQuery({ queryKey: ["research-sessions"], queryFn: api.researchSessions, refetchInterval: (query) => query.state.data?.some((item) => activeStatuses.has(item.status)) ? 3000 : false });
   const created = useMutation({
-    mutationFn: () => api.createResearch({ query: draftQuery.trim(), marketplaces, max_items: Math.min(50, maxItems), budget_usd: normalizedBudget, model: model.trim() || undefined }),
+    mutationFn: () => api.createResearch({ query: draftQuery.trim(), marketplaces, max_items: Math.min(500, maxItems), budget_usd: normalizedBudget, model: model.trim() || undefined }),
     onSuccess: (session) => {
       void client.invalidateQueries({ queryKey: ["research-sessions"] });
       navigate(`/research/${session.id}`);
@@ -55,7 +55,7 @@ function ResearchHome({ draftQuery, onDraftQuery }: { draftQuery: string; onDraf
       </div>
       <button type="button" className="composer__advanced" onClick={() => setAdvancedOpen((value) => !value)} aria-expanded={advancedOpen}><SlidersHorizontal size={16} />Параметры <ChevronRight size={16} /></button>
       {advancedOpen && <div className="composer__controls">
-        <label>Объявлений<input type="number" min="1" max="50" value={maxItems} onChange={(event) => setMaxItems(Math.min(50, Math.max(1, Number(event.target.value) || 1)))} /></label>
+        <label>Объявлений<input type="number" min="1" max="500" value={maxItems} onChange={(event) => setMaxItems(Math.min(500, Math.max(1, Number(event.target.value) || 1)))} /></label>
         <label>Лимит, $<input inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></label>
         <label className="composer__model">Модель OpenRouter <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Из .env, если пусто" /></label>
       </div>}
