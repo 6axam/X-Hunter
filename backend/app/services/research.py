@@ -61,6 +61,21 @@ _UNRELATED_PRODUCT_TERMS = {
     "екран",
     "экран",
 }
+_ACCESSORY_TERMS = {
+    "блок",
+    "живлення",
+    "зарядка",
+    "зарядний",
+    "зарядное",
+    "акумулятор",
+    "батарея",
+    "клавіатура",
+    "клавиатура",
+    "екран",
+    "экран",
+    "адаптер",
+    "adapter",
+}
 _BRAND_ALIASES = {
     "lenovo": {"lenovo", "леново"},
     "asus": {"asus", "асус"},
@@ -625,6 +640,10 @@ class ResearchService:
         product_type = str(plan.get("product_type") or "").casefold()
         product_terms = _PRODUCT_TERMS.get(product_type, {product_type})
         has_product = bool(tokens & product_terms)
+        # Full OLX descriptions often mention "ноутбук" while advertising only a
+        # charger or power supply.  Such accessories are never the requested device.
+        if tokens & _ACCESSORY_TERMS:
+            return "reject", "Карточка относится к аксессуару, а не к самому товару."
         if tokens & _UNRELATED_PRODUCT_TERMS and not has_product:
             return "reject", "Объявление относится к другому типу товара или услуги."
         if not has_product:

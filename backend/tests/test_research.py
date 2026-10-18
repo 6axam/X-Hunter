@@ -98,6 +98,7 @@ def test_thinkpad_prefilter_rejects_unrelated_and_wrong_brand_cards() -> None:
         source_listing_id="IDpower",
         canonical_url="https://www.olx.ua/d/uk/obyavlenie/power-IDpower.html",
         title="Блок живлення Lenovo ThinkPad",
+        description="Сетевой адаптер для ноутбука Lenovo ThinkPad",
         price=Decimal("900"),
         currency="UAH",
     )
