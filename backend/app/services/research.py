@@ -623,11 +623,22 @@ class ResearchService:
         values = [candidate.title, candidate.description or "", *candidate.attributes.values()]
         return set(_TOKEN_PATTERN.findall(" ".join(values).casefold()))
 
+    @staticmethod
+    def _title_tokens(candidate: ListingCandidate) -> set[str]:
+        """Tokens that describe the object being sold, rather than its bundle.
+
+        OLX descriptions routinely mention chargers, batteries and adapters even when
+        the advertised object is a laptop.  The title is the cheapest trustworthy
+        signal for the primary object; details can later refine an uncertain card.
+        """
+        return set(_TOKEN_PATTERN.findall(candidate.title.casefold()))
+
     def _deterministic_relevance(
         self, candidate: ListingCandidate, plan: dict[str, Any]
     ) -> tuple[str, str]:
         """Reject clear mismatches using product semantics, not one arbitrary substring."""
         tokens = self._candidate_tokens(candidate)
+        title_tokens = self._title_tokens(candidate)
         max_price = plan.get("max_price")
         if (
             max_price
@@ -640,9 +651,12 @@ class ResearchService:
         product_type = str(plan.get("product_type") or "").casefold()
         product_terms = _PRODUCT_TERMS.get(product_type, {product_type})
         has_product = bool(tokens & product_terms)
-        # Full OLX descriptions often mention "ноутбук" while advertising only a
-        # charger or power supply.  Such accessories are never the requested device.
-        if tokens & _ACCESSORY_TERMS:
+        title_has_product = bool(title_tokens & product_terms)
+        # An accessory is a mismatch only when it is the primary advertised object.
+        # It is safe to mention a charger/battery in a full-device description or
+        # title ("ThinkPad T480, зарядка в комплекте").
+        title_has_accessory = bool(title_tokens & _ACCESSORY_TERMS)
+        if title_has_accessory and not title_has_product:
             return "reject", "Карточка относится к аксессуару, а не к самому товару."
         if tokens & _UNRELATED_PRODUCT_TERMS and not has_product:
             return "reject", "Объявление относится к другому типу товара или услуги."

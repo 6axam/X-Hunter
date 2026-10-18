@@ -116,11 +116,20 @@ def test_thinkpad_prefilter_rejects_unrelated_and_wrong_brand_cards() -> None:
         price=Decimal("4500"),
         currency="UAH",
     )
+    thinkpad_with_charger = ListingCandidate(
+        source_listing_id="IDthinkpad-charger",
+        canonical_url="https://www.olx.ua/d/uk/obyavlenie/thinkpad-charger-IDthinkpad.html",
+        title="Ноутбук Lenovo ThinkPad T480, зарядка в комплекте",
+        description="Новая батарея, блок питания и зарядка в комплекте.",
+        price=Decimal("4500"),
+        currency="UAH",
+    )
 
     assert service._deterministic_relevance(motorcycle, plan)[0] == "reject"
     assert service._deterministic_relevance(power_supply, plan)[0] == "reject"
     assert service._deterministic_relevance(asus, plan)[0] == "reject"
     assert service._deterministic_relevance(thinkpad, plan)[0] == "accept"
+    assert service._deterministic_relevance(thinkpad_with_charger, plan)[0] == "accept"
 
 
 @pytest.mark.asyncio
