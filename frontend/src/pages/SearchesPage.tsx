@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CirclePause, ExternalLink, Play, Plus, Radar, X } from "lucide-react";
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { t } from "../i18n";
@@ -17,6 +17,7 @@ export function SearchesPage() {
   const [showImport, setShowImport] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Search | null>(null);
   const searches = useQuery({ queryKey: ["searches"], queryFn: api.searches });
   const form = useForm<ImportForm>({ resolver: zodResolver(importSchema) });
   const importer = useMutation({
@@ -60,7 +61,7 @@ export function SearchesPage() {
       {searches.data?.length === 0 && <EmptySearches onAdd={() => setShowImport(true)} />}
       <div className="search-grid">
         {searches.data?.map((search) => (
-          <SearchCard key={search.id} search={search} onNotice={setNotice} />
+          <SearchCard key={search.id} search={search} onNotice={setNotice} onOpen={() => setEditing(search)} />
         ))}
       </div>
       {(showImport || draft) && (
@@ -91,21 +92,31 @@ export function SearchesPage() {
           </Card>
         </div>
       )}
+      {editing && <SearchSettingsSheet search={editing} onClose={() => setEditing(null)} />}
     </section>
   );
 }
 
-function SearchCard({ search, onNotice }: { search: Search; onNotice: (value: string) => void }) {
+function SearchCard({ search, onNotice, onOpen }: { search: Search; onNotice: (value: string) => void; onOpen: () => void }) {
   const client = useQueryClient();
   const toggle = useMutation({ mutationFn: () => api.patchSearch(search, { active: !search.active }), onSuccess: () => void client.invalidateQueries({ queryKey: ["searches"] }) });
   const scan = useMutation({ mutationFn: () => api.scan(search.id), onSuccess: (run) => onNotice(run.status === "not_configured" ? t.sourceOff : `Проверка: ${run.status}`) });
   const discounts = useMutation({ mutationFn: () => api.patchSearch(search, { event_settings: { ...search.event_settings, price_drop_enabled: !search.event_settings.price_drop_enabled, price_drop_percent: search.event_settings.price_drop_percent ?? 5 } }), onSuccess: () => void client.invalidateQueries({ queryKey: ["searches"] }) });
   const price = search.specification.price_to ? `до ${search.specification.price_to} грн` : "любая цена";
-  return <Card className="search-card">
-    <div className="search-card__top"><div className="search-card__icon"><Radar size={21} /></div><button role="switch" aria-checked={search.active} className={`switch ${search.active ? "switch--on" : ""}`} onClick={() => toggle.mutate()}><span /></button></div>
+  const openFromKeyboard = (event: KeyboardEvent<HTMLElement>) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } };
+  return <Card className="search-card search-card--interactive" role="link" tabIndex={0} onClick={onOpen} onKeyDown={openFromKeyboard}>
+    <div className="search-card__top"><div className="search-card__icon"><Radar size={21} /></div><button role="switch" aria-checked={search.active} className={`switch ${search.active ? "switch--on" : ""}`} onClick={(event) => { event.stopPropagation(); toggle.mutate(); }}><span /></button></div>
     <div><h2>{search.name}</h2><p>{String(price)} · каждые {search.interval_minutes} мин</p></div>
-    <div className="search-card__footer"><button className="text-action" onClick={() => discounts.mutate()}>Скидки {search.event_settings.price_drop_enabled ? "вкл" : "выкл"}</button><Button className="button--ghost" onClick={() => scan.mutate()} disabled={scan.isPending}>{scan.isPending ? <CirclePause size={17} /> : <Play size={17} />}Проверить</Button></div>
+    <div className="search-card__footer"><button className="text-action" onClick={(event) => { event.stopPropagation(); discounts.mutate(); }}>Скидки {search.event_settings.price_drop_enabled ? "вкл" : "выкл"}</button><Button className="button--ghost" onClick={(event) => { event.stopPropagation(); scan.mutate(); }} disabled={scan.isPending}>{scan.isPending ? <CirclePause size={17} /> : <Play size={17} />}Проверить</Button></div>
   </Card>;
+}
+
+function SearchSettingsSheet({ search, onClose }: { search: Search; onClose: () => void }) {
+  const client = useQueryClient();
+  const [name, setName] = useState(search.name);
+  const [interval, setInterval] = useState(search.interval_minutes);
+  const saved = useMutation({ mutationFn: () => api.patchSearch(search, { name: name.trim() || search.name, interval_minutes: interval }), onSuccess: () => { void client.invalidateQueries({ queryKey: ["searches"] }); onClose(); } });
+  return <div className="sheet-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><Card className="sheet"><div className="sheet__header"><div><span className="eyebrow">Мониторинг</span><h2>Настройки поиска</h2></div><button className="icon-button" onClick={onClose}><X /></button></div><div className="form-stack"><label>Название<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Период проверки, минут<input type="number" min="10" max="10080" value={interval} onChange={(event) => setInterval(Math.max(10, Number(event.target.value) || 10))} /></label><p className="form-note">Фильтры и URL сохранены из импорта. Для другой OLX-выдачи создайте новый мониторинг.</p>{saved.error && <ErrorBlock error={saved.error} />}<Button onClick={() => saved.mutate()} disabled={saved.isPending}>{saved.isPending ? "Сохраняю…" : "Сохранить"}</Button></div></Card></div>;
 }
 
 function EmptySearches({ onAdd }: { onAdd: () => void }) { return <Card className="empty-state"><div className="empty-state__icon"><Radar /></div><h2>Пока нет поисков</h2><p>{t.emptySearches}</p><Button onClick={onAdd}><Plus size={18} />{t.addSearch}</Button></Card>; }
