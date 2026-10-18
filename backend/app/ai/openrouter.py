@@ -81,10 +81,17 @@ class ProductHypothesis(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class SearchFilter(BaseModel):
+    key: str = Field(min_length=1, max_length=80)
+    value: str = Field(min_length=1, max_length=160)
+
+
 class SearchStrategy(BaseModel):
     phrase: str = Field(min_length=2, max_length=120)
     category: str | None = Field(default=None, max_length=100)
-    filters: dict[str, str] = Field(default_factory=dict)
+    # A list, rather than a free-form object, remains valid for strict structured
+    # output across OpenRouter providers and still represents marketplace filters.
+    filters: list[SearchFilter] = Field(default_factory=list, max_length=8)
     priority: int = Field(ge=1, le=5)
     expected_result_type: str = Field(min_length=2, max_length=160)
     goal: str = Field(min_length=1, max_length=220)
@@ -404,7 +411,10 @@ class OpenRouterClient:
         return {
             "model": model,
             "temperature": 0,
-            "max_tokens": 1800,
+            # Luna can use part of this budget for reasoning before emitting the
+            # strict object.  The technical schema has several bounded lists, so
+            # a smaller ceiling can truncate valid JSON on otherwise good calls.
+            "max_tokens": 3200,
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {

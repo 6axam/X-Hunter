@@ -331,7 +331,7 @@ async def test_agent_v2_runs_durable_round_and_final_comparison(
                     SearchStrategy(
                         phrase="Intel mini pc",
                         category="mini_pc",
-                        filters={},
+                        filters=[],
                         priority=1,
                         expected_result_type="mini PC",
                         goal="Найти Intel",
@@ -377,7 +377,7 @@ async def test_agent_v2_runs_durable_round_and_final_comparison(
                         SearchStrategy(
                             phrase="Dell OptiPlex Micro",
                             category="mini_pc",
-                            filters={},
+                            filters=[],
                             priority=1,
                             expected_result_type="mini PC",
                             goal="Проверить альтернативу",

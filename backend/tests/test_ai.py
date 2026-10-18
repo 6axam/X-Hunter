@@ -101,6 +101,7 @@ def test_agent_reasoning_and_supervisor_use_strict_public_json() -> None:
     )
 
     assert reasoning["response_format"]["json_schema"]["strict"] is True
+    assert reasoning["max_tokens"] == 3200
     assert "не выдумывай" in reasoning["messages"][0]["content"].casefold()
     assert supervisor["response_format"]["json_schema"]["strict"] is True
     schema = strict_json_schema(TechnicalReasoning)

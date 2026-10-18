@@ -438,7 +438,7 @@ class ResearchService:
             await self.db.commit()
             return False
         prompt_price, completion_price, request_price = prices
-        estimate = prompt_price * 2_000 + completion_price * 1_800 + request_price
+        estimate = prompt_price * 2_000 + completion_price * 3_200 + request_price
         if session.actual_cost_usd + estimate > session.budget_usd:
             await self._budget_error(
                 session,
@@ -475,7 +475,14 @@ class ResearchService:
             + completion_price * usage["completion_tokens"]
             + request_price
         )
-        session.technical_reasoning = result.model_dump(mode="json")
+        needs_critical_clarification = self._needs_critical_clarification(result.model_dump())
+        reasoning_data = result.model_dump(mode="json")
+        # RAM/load, storage and delivery questions are useful uncertainty, but do
+        # not block a buyer who already gave a usable product category and budget.
+        # They remain visible in ``unknowns`` for later evaluation.
+        if result.needs_clarification and not needs_critical_clarification:
+            reasoning_data["needs_clarification"] = False
+        session.technical_reasoning = reasoning_data
         session.product_hypotheses = (
             result.candidate_product_families
             and [value.model_dump(mode="json") for value in result.candidate_product_families]
@@ -485,7 +492,7 @@ class ResearchService:
             session, "technical_reasoning", estimate=estimate, actual=actual, usage=usage
         )
         session.lease_expires_at = utcnow() + timedelta(minutes=5)
-        if result.needs_clarification:
+        if needs_critical_clarification:
             session.status, session.stage, session.lease_expires_at = (
                 "needs_clarification",
                 "needs_clarification",
@@ -497,6 +504,12 @@ class ResearchService:
                 result.clarification_question or "Нужно уточнить требования.",
             )
         else:
+            if result.needs_clarification:
+                await self._event(
+                    session,
+                    "clarification_deferred",
+                    "Необязательное уточнение сохранено как риск; поиск продолжается.",
+                )
             await self._event(
                 session,
                 "technical_ready",
@@ -504,7 +517,16 @@ class ResearchService:
                 {"hypotheses": len(session.product_hypotheses)},
             )
         await self.db.commit()
-        return not result.needs_clarification
+        return not needs_critical_clarification
+
+    @staticmethod
+    def _needs_critical_clarification(reasoning: dict[str, Any]) -> bool:
+        """Only stop when a marketplace direction cannot be chosen safely."""
+        category = str(reasoning.get("product_category") or "").casefold().strip()
+        generic_categories = {"товар", "річ", "вещь", "product", "item", "unknown"}
+        return bool(reasoning.get("needs_clarification")) and (
+            not category or category in generic_categories or not reasoning.get("search_strategy")
+        )
 
     async def _ensure_search_plan(
         self, session: ResearchSession, model_info: dict[str, Any]
@@ -756,7 +778,7 @@ class ResearchService:
             {
                 "phrase": phrase,
                 "category": session.search_plan.get("product_type"),
-                "filters": {},
+                "filters": [],
                 "priority": index + 1,
                 "expected_result_type": session.search_plan.get("product_type") or "товар",
                 "goal": "Проверка первоначального направления",
