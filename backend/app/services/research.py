@@ -37,6 +37,10 @@ _PRODUCT_TERMS = {
     "phone": {"phone", "smartphone", "телефон", "смартфон", "мобільний"},
     "smartphone": {"phone", "smartphone", "телефон", "смартфон", "мобільний"},
     "bicycle": {"bicycle", "bike", "велосипед", "вел"},
+    "electric_bicycle": {"bicycle", "bike", "велосипед", "електровелосипед", "электровелосипед"},
+    "mini_pc": {"mini", "pc", "мінпк", "минипк", "мініпк", "компьютер"},
+    "mini-pc": {"mini", "pc", "мінпк", "минипк", "мініпк", "компьютер"},
+    "desktop": {"pc", "компьютер", "системник", "системный"},
 }
 _UNRELATED_PRODUCT_TERMS = {
     "мотоцикл",
@@ -303,30 +307,525 @@ class ResearchService:
             session.started_at or utcnow(),
             utcnow() + timedelta(minutes=5),
         )
-        await self._event(session, "collecting", "Ищу подходящие объявления на OLX.ua.")
         await self.db.commit()
-        candidates = await self._collect_olx(session)
-        if candidates is None:
-            logger.warning(
-                "OLX collection failed",
-                extra={"research_id": session.id, "event": "research_collection_failed"},
-            )
-            return session.status
-        logger.info(
-            "OLX candidates collected",
-            extra={
-                "research_id": session.id,
-                "event": "research_candidates_collected",
-                "status": f"count={len(candidates)}",
-            },
-        )
-
-        for candidate in candidates:
+        while session.status == "running":
+            if session.started_at and utcnow() - session.started_at > timedelta(
+                seconds=self.settings.research_max_runtime_seconds
+            ):
+                await self._event(
+                    session,
+                    "runtime_limit",
+                    "Достигнут лимит времени исследования; сохраняю частичный итог.",
+                )
+                await self._finalize(
+                    session, model_info, fallback_reason="Достигнут лимит времени."
+                )
+                break
+            round_state = await self._prepare_round(session)
+            if round_state is None:
+                break
+            candidates = await self._round_candidates(session, round_state)
+            if candidates is None:
+                return session.status
+            await self._evaluate_candidates(session, candidates, model_info)
             await self.db.refresh(session)
             if session.status != "running":
-                return session.status
-            if session.processed_count >= session.max_items:
                 break
+            session.compact_memory = await self._memory(session)
+            session.market_statistics = await self._market_statistics(session)
+            await self._complete_round(session, round_state)
+            decision = await self._supervise(session, model_info)
+            if decision is None or session.status != "running":
+                break
+            if decision["action"] == "REQUEST_CLARIFICATION":
+                session.status, session.stage, session.lease_expires_at = (
+                    "needs_clarification",
+                    "needs_clarification",
+                    None,
+                )
+                await self._event(
+                    session,
+                    "clarification",
+                    decision.get("clarification_question") or decision["reason"],
+                )
+                await self.db.commit()
+                break
+            if decision["action"] == "FINALIZE" or not decision.get("next_strategies"):
+                await self._finalize(session, model_info)
+                break
+            if session.current_round >= self.settings.research_max_rounds:
+                await self._event(session, "round_limit", "Достигнут лимит поисковых раундов.")
+                await self._finalize(session, model_info)
+                break
+            await self._start_next_round(session, decision)
+        logger.info(
+            "Research session ended",
+            extra={
+                "research_id": session.id,
+                "event": "research_finished",
+                "status": session.status,
+            },
+        )
+        return session.status
+
+    def _pricing(self, model_info: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal] | None:
+        pricing = model_info.get("pricing") or {}
+        prompt_price = AiService._price(pricing.get("prompt"))
+        completion_price = AiService._price(pricing.get("completion"))
+        if prompt_price is None or completion_price is None:
+            return None
+        return (
+            prompt_price,
+            completion_price,
+            AiService._price(pricing.get("request")) or Decimal("0"),
+        )
+
+    async def _budget_error(self, session: ResearchSession, stage: str, message: str) -> None:
+        session.status, session.stage, session.error_code, session.lease_expires_at = (
+            "budget_exhausted",
+            stage,
+            "budget_exhausted",
+            None,
+        )
+        await self._event(session, "budget", message)
+        await self.db.commit()
+
+    def _record_stage_usage(
+        self,
+        session: ResearchSession,
+        stage: str,
+        *,
+        estimate: Decimal,
+        actual: Decimal,
+        usage: dict[str, int],
+    ) -> None:
+        entries = dict(session.stage_usage or {})
+        previous = dict(entries.get(stage) or {})
+        previous["calls"] = int(previous.get("calls", 0)) + 1
+        previous["estimated_cost_usd"] = str(
+            Decimal(str(previous.get("estimated_cost_usd", "0"))) + estimate
+        )
+        previous["actual_cost_usd"] = str(
+            Decimal(str(previous.get("actual_cost_usd", "0"))) + actual
+        )
+        for key in ("prompt_tokens", "completion_tokens", "cached_input_tokens"):
+            previous[key] = int(previous.get(key, 0)) + int(usage.get(key, 0))
+        entries[stage] = previous
+        session.stage_usage = entries
+        session.estimated_cost_usd += estimate
+        session.actual_cost_usd += actual
+
+    async def _ensure_technical_reasoning(
+        self, session: ResearchSession, model_info: dict[str, Any]
+    ) -> bool:
+        if session.technical_reasoning:
+            return True
+        prices = self._pricing(model_info)
+        if prices is None:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "failed",
+                "technical_pricing_unknown",
+                "pricing_unknown",
+                None,
+            )
+            await self._event(
+                session, "technical_error", "Невозможно оценить цену технического анализа."
+            )
+            await self.db.commit()
+            return False
+        prompt_price, completion_price, request_price = prices
+        estimate = prompt_price * 2_000 + completion_price * 1_800 + request_price
+        if session.actual_cost_usd + estimate > session.budget_usd:
+            await self._budget_error(
+                session,
+                "technical_budget_exhausted",
+                "Лимит не покрывает технический анализ задачи.",
+            )
+            return False
+        session.stage = "understanding_requirements"
+        await self._event(
+            session, "technical_reasoning", "ИИ разбирает требования и направления поиска."
+        )
+        await self.db.commit()
+        try:
+            result, usage = await OpenRouterClient(
+                self.settings.openrouter_api_key or ""
+            ).reason_about_requirements(model=session.model or "", query=session.query)
+        except Exception as exc:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "failed",
+                "technical_reasoning_failed",
+                "technical_reasoning_failed",
+                None,
+            )
+            await self._event(
+                session,
+                "technical_error",
+                "Не удалось осмыслить требования.",
+                {"type": type(exc).__name__},
+            )
+            await self.db.commit()
+            return False
+        actual = (
+            prompt_price * usage["prompt_tokens"]
+            + completion_price * usage["completion_tokens"]
+            + request_price
+        )
+        session.technical_reasoning = result.model_dump(mode="json")
+        session.product_hypotheses = (
+            result.candidate_product_families
+            and [value.model_dump(mode="json") for value in result.candidate_product_families]
+            or []
+        )
+        self._record_stage_usage(
+            session, "technical_reasoning", estimate=estimate, actual=actual, usage=usage
+        )
+        session.lease_expires_at = utcnow() + timedelta(minutes=5)
+        if result.needs_clarification:
+            session.status, session.stage, session.lease_expires_at = (
+                "needs_clarification",
+                "needs_clarification",
+                None,
+            )
+            await self._event(
+                session,
+                "clarification",
+                result.clarification_question or "Нужно уточнить требования.",
+            )
+        else:
+            await self._event(
+                session,
+                "technical_ready",
+                "Сохранены технические требования и гипотезы моделей.",
+                {"hypotheses": len(session.product_hypotheses)},
+            )
+        await self.db.commit()
+        return not result.needs_clarification
+
+    async def _ensure_search_plan(
+        self, session: ResearchSession, model_info: dict[str, Any]
+    ) -> bool:
+        """Create exactly one durable plan before any marketplace URL is built."""
+        if session.search_plan:
+            return True
+        if not await self._ensure_technical_reasoning(session, model_info):
+            return False
+        prices = self._pricing(model_info)
+        if prices is None:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "failed",
+                "planning_pricing_unknown",
+                "pricing_unknown",
+                None,
+            )
+            await self._event(
+                session, "planning_error", "Невозможно безопасно оценить цену планирования."
+            )
+            await self.db.commit()
+            return False
+        prompt_price, completion_price, request_price = prices
+        estimate = prompt_price * 1_200 + completion_price * 800 + request_price
+        if session.actual_cost_usd + estimate > session.budget_usd:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "budget_exhausted",
+                "planning_budget_exhausted",
+                "budget_exhausted",
+                None,
+            )
+            await self._event(session, "budget", "Лимит расходов не покрывает планирование поиска.")
+            await self.db.commit()
+            return False
+        session.stage = "planning_search"
+        await self._event(session, "planning", "ИИ формирует поисковый план до обращения к OLX.")
+        await self.db.commit()
+        try:
+            client = OpenRouterClient(self.settings.openrouter_api_key or "")
+            plan, usage = await client.plan_search(
+                model=session.model or "",
+                query=session.query,
+                technical_reasoning=session.technical_reasoning,
+            )
+        except Exception as exc:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "failed",
+                "planning_failed",
+                "planning_failed",
+                None,
+            )
+            await self._event(
+                session,
+                "planning_error",
+                "Не удалось сформировать поисковый план; OLX не запускался.",
+                {"type": type(exc).__name__},
+            )
+            await self.db.commit()
+            logger.warning(
+                "Search planning failed",
+                extra={
+                    "research_id": session.id,
+                    "event": "search_planning_failed",
+                    "status": type(exc).__name__,
+                },
+            )
+            return False
+        actual = (
+            prompt_price * usage["prompt_tokens"]
+            + completion_price * usage["completion_tokens"]
+            + request_price
+        )
+        plan_data = plan.model_dump(mode="json")
+        reasoning = session.technical_reasoning
+        plan_data["hard_requirements"] = list(
+            dict.fromkeys([*plan.hard_requirements, *reasoning.get("hard_constraints", [])])
+        )
+        plan_data["soft_requirements"] = list(
+            dict.fromkeys([*plan.soft_requirements, *reasoning.get("soft_preferences", [])])
+        )
+        plan_data["excluded_attributes"] = reasoning.get("excluded_attributes", [])
+        session.search_plan = plan_data
+        session.planning_estimated_cost_usd = estimate
+        session.planning_actual_cost_usd = actual
+        session.planning_input_tokens = usage["prompt_tokens"]
+        session.planning_output_tokens = usage["completion_tokens"]
+        self._record_stage_usage(
+            session, "initial_planning", estimate=estimate, actual=actual, usage=usage
+        )
+        session.lease_expires_at = utcnow() + timedelta(minutes=5)
+        if plan.needs_clarification:
+            session.status, session.stage, session.lease_expires_at = (
+                "needs_clarification",
+                "needs_clarification",
+                None,
+            )
+            await self._event(
+                session,
+                "clarification",
+                plan.clarification_question or "Уточните, какой тип товара нужен.",
+                {"plan": session.search_plan},
+            )
+        else:
+            await self._event(
+                session,
+                "planned",
+                "ИИ сформировал поисковые фразы и ограничения.",
+                {"plan": session.search_plan},
+            )
+        await self.db.commit()
+        logger.info(
+            "Search plan saved",
+            extra={
+                "research_id": session.id,
+                "event": "search_planning_completed",
+                "status": f"queries={len(plan.search_queries)}",
+            },
+        )
+        return not plan.needs_clarification
+
+    def _search_spec(self, phrase: str, plan: dict[str, Any]) -> OlxSearchSpec | None:
+        """Build OLX URL only from a compact planner phrase and structured price data."""
+        path_phrase = quote("-".join(phrase.split()), safe="-")
+        parsed = self.source.parse_search_url(f"https://www.olx.ua/uk/list/q-{path_phrase}/")
+        if not parsed.search:
+            return None
+        max_price = plan.get("max_price")
+        currency = plan.get("currency")
+        specification = parsed.search.model_copy(
+            update={
+                "price_to": Decimal(str(max_price)) if max_price else None,
+                "currency": currency if currency == "UAH" else None,
+            }
+        )
+        specification.current_url = self.source.build_search_url(specification)
+        return specification
+
+    async def _collect_olx(
+        self,
+        session: ResearchSession,
+        queries: list[str] | None = None,
+        *,
+        round_number: int | None = None,
+    ) -> list[ListingCandidate] | None:
+        queries = list(dict.fromkeys(queries or session.search_plan.get("search_queries") or []))
+        executed = {
+            str(record.get("query", "")).casefold().strip()
+            for record in session.executed_searches
+            if record.get("query")
+        }
+        # A completed phrase is immutable evidence for this session.  Re-running it
+        # after a restart only wastes OLX requests and can change the candidate set.
+        queries = [query for query in queries if query.casefold().strip() not in executed]
+        if not queries:
+            await self._event(session, "collection_skipped", "Новых поисковых фраз для OLX нет.")
+            await self.db.commit()
+            return []
+
+        candidates: list[ListingCandidate] = []
+        seen: set[str] = set()
+        failures: list[dict[str, str]] = []
+        # Each planned phrase gets its first page.  Only later pagination is bounded by
+        # the global limit, otherwise a broad first phrase can hide model-family variants.
+        max_candidates = max(session.max_items * 5, 25) * len(queries)
+        for phrase in queries:
+            specification = self._search_spec(phrase, session.search_plan)
+            if specification is None:
+                failures.append({"query": phrase, "code": "query_build_failed"})
+                continue
+            search_record: dict[str, Any] = {
+                "query": phrase,
+                "url": specification.current_url,
+                "price_to": str(specification.price_to) if specification.price_to else None,
+                "pages": [],
+            }
+            if round_number is not None:
+                search_record["round"] = round_number
+            for page in range(1, self.settings.scan_max_pages + 1):
+                if page > 1 and len(candidates) >= max_candidates:
+                    break
+                result = await self.source.fetch_search_page(specification, page)
+                page_record = {
+                    "page": page,
+                    "state": result.state.value,
+                    "url": result.metadata.get("requested_url", specification.current_url),
+                    "final_url": result.metadata.get("final_url"),
+                    "results": len(result.data or []),
+                    "error_code": result.error_code,
+                }
+                search_record["pages"].append(page_record)
+                logger.info(
+                    "OLX planned search page processed",
+                    extra={
+                        "research_id": session.id,
+                        "event": "olx_planned_search",
+                        "status": (
+                            f"query={phrase}; page={page}; results={page_record['results']}; "
+                            f"state={result.state.value}; error={result.error_code or '-'}"
+                        ),
+                    },
+                )
+                if result.state is not SourceState.COMPLETE:
+                    failures.append(
+                        {"query": phrase, "code": result.error_code or result.state.value}
+                    )
+                    break
+                page_candidates = [
+                    ListingCandidate.model_validate(raw) for raw in result.data or []
+                ]
+                for candidate in page_candidates:
+                    identifier = candidate.source_listing_id or candidate.canonical_url
+                    if identifier in seen:
+                        continue
+                    seen.add(identifier)
+                    candidates.append(candidate)
+                if len(page_candidates) == 0:
+                    break
+            session.executed_searches = [*session.executed_searches, search_record]
+            await self.db.commit()
+
+        session.collected_count += len(candidates)
+        if not candidates:
+            await self._event(
+                session,
+                "collection_empty",
+                "OLX не дал новых кандидатов по этому направлению.",
+                {"failures": failures},
+            )
+            await self.db.commit()
+            return []
+        await self._event(
+            session,
+            "collected",
+            f"Подтверждено кандидатов OLX: {len(candidates)}.",
+            {"queries": queries, "collected": len(candidates), "failures": failures},
+        )
+        await self.db.commit()
+        return candidates
+
+    async def _prepare_round(self, session: ResearchSession) -> dict[str, Any] | None:
+        """Return the unfinished durable round, or create the initial one once."""
+        rounds = list(session.research_rounds or [])
+        for round_state in rounds:
+            if round_state.get("status") == "active":
+                return round_state
+        if rounds:
+            return None
+        strategies = [
+            {
+                "phrase": phrase,
+                "category": session.search_plan.get("product_type"),
+                "filters": {},
+                "priority": index + 1,
+                "expected_result_type": session.search_plan.get("product_type") or "товар",
+                "goal": "Проверка первоначального направления",
+                "rationale": "Фраза из первоначального поискового плана.",
+            }
+            for index, phrase in enumerate(session.search_plan.get("search_queries") or [])
+        ][: self.settings.research_max_queries_per_round]
+        if not strategies:
+            session.status, session.stage, session.error_code, session.lease_expires_at = (
+                "failed",
+                "planning_invalid",
+                "planning_invalid",
+                None,
+            )
+            await self._event(session, "planning_error", "План не содержит поисковых фраз для OLX.")
+            await self.db.commit()
+            return None
+        round_state = {
+            "number": 1,
+            "status": "active",
+            "strategies": strategies,
+            "started_at": utcnow().isoformat(),
+            "collected_count": 0,
+            "evaluated_count": 0,
+            "new_candidates": [],
+        }
+        session.current_round = 1
+        session.research_rounds = [round_state]
+        session.stage = "collecting_olx"
+        await self._event(session, "round_started", "Начат поисковый раунд 1.", {"round": 1})
+        await self.db.commit()
+        return round_state
+
+    async def _round_candidates(
+        self, session: ResearchSession, round_state: dict[str, Any]
+    ) -> list[ListingCandidate] | None:
+        saved = round_state.get("new_candidates") or []
+        if saved:
+            return [ListingCandidate.model_validate(candidate) for candidate in saved]
+        phrases = [
+            str(strategy.get("phrase", "")).strip()
+            for strategy in round_state.get("strategies") or []
+            if str(strategy.get("phrase", "")).strip()
+        ]
+        await self._event(
+            session,
+            "collecting",
+            f"Раунд {round_state['number']}: ищу подходящие объявления на OLX.ua.",
+            {"round": round_state["number"], "queries": phrases},
+        )
+        await self.db.commit()
+        candidates = await self._collect_olx(
+            session, phrases, round_number=int(round_state["number"])
+        )
+        if candidates is None:
+            return None
+        round_state["new_candidates"] = [
+            candidate.model_dump(mode="json") for candidate in candidates
+        ]
+        round_state["collected_count"] = len(candidates)
+        await self._replace_round(session, round_state)
+        return candidates
+
+    async def _evaluate_candidates(
+        self,
+        session: ResearchSession,
+        candidates: list[ListingCandidate],
+        model_info: dict[str, Any],
+    ) -> None:
+        for candidate in candidates:
+            await self.db.refresh(session)
+            if session.status != "running" or session.processed_count >= session.max_items:
+                return
             decision, reason = self._deterministic_relevance(candidate, session.search_plan)
             if decision == "reject":
                 await self._reject_before_analysis(session, candidate, reason)
@@ -379,244 +878,289 @@ class ResearchService:
                 await self.db.flush()
             await self._evaluate_item(session, item, version, model_info)
 
-        if session.status == "running":
-            session.status, session.stage, session.finished_at, session.lease_expires_at = (
-                "completed",
-                "completed",
-                utcnow(),
-                None,
-            )
-            await self._event(session, "completed", "Исследование завершено. Рейтинг сохранён.")
-            await self.db.commit()
-        logger.info(
-            "Research session ended",
-            extra={
-                "research_id": session.id,
-                "event": "research_finished",
-                "status": session.status,
-            },
-        )
-        return session.status
+    async def _replace_round(self, session: ResearchSession, round_state: dict[str, Any]) -> None:
+        rounds = list(session.research_rounds or [])
+        session.research_rounds = [
+            round_state if value.get("number") == round_state.get("number") else value
+            for value in rounds
+        ]
+        await self.db.commit()
 
-    async def _ensure_search_plan(
+    async def _complete_round(self, session: ResearchSession, round_state: dict[str, Any]) -> None:
+        round_state["status"] = "completed"
+        round_state["completed_at"] = utcnow().isoformat()
+        round_state["evaluated_count"] = session.processed_count
+        # Candidate data is useful only for crash recovery while active; keeping it
+        # after a completed round would bloat each session with raw OLX payloads.
+        round_state.pop("new_candidates", None)
+        await self._replace_round(session, round_state)
+        await self._event(
+            session,
+            "round_completed",
+            f"Раунд {round_state['number']} завершён: собрано {round_state['collected_count']}.",
+            {"round": round_state["number"], "collected": round_state["collected_count"]},
+        )
+        await self.db.commit()
+
+    async def _start_next_round(self, session: ResearchSession, decision: dict[str, Any]) -> None:
+        strategies = list(decision.get("next_strategies") or [])[
+            : self.settings.research_max_queries_per_round
+        ]
+        number = session.current_round + 1
+        round_state = {
+            "number": number,
+            "status": "active",
+            "strategies": strategies,
+            "started_at": utcnow().isoformat(),
+            "collected_count": 0,
+            "evaluated_count": 0,
+            "new_candidates": [],
+            "supervisor_action": decision["action"],
+        }
+        session.current_round = number
+        session.research_rounds = [*session.research_rounds, round_state]
+        session.stage, session.lease_expires_at = "collecting_olx", utcnow() + timedelta(minutes=5)
+        await self._event(
+            session,
+            "round_started",
+            f"Supervisor выбрал {decision['action']}; начат раунд {number}.",
+            {"round": number, "reason": decision["reason"], "action": decision["action"]},
+        )
+        await self.db.commit()
+
+    async def _supervisor_context(self, session: ResearchSession) -> dict[str, Any]:
+        items = list(
+            await self.db.scalars(
+                select(ResearchItem)
+                .where(ResearchItem.session_id == session.id, ResearchItem.status == "complete")
+                .order_by(ResearchItem.score.desc().nullslast())
+                .limit(8)
+            )
+        )
+        return {
+            "round": session.current_round,
+            "round_limit": self.settings.research_max_rounds,
+            "executed_queries": [item.get("query") for item in session.executed_searches],
+            "counts": {
+                "collected": session.collected_count,
+                "evaluated": session.processed_count,
+                "shortlisted": session.accepted_count,
+                "rejected_before_analysis": session.rejected_before_analysis_count,
+            },
+            "remaining_budget_usd": str(
+                max(session.budget_usd - session.actual_cost_usd, Decimal("0"))
+            ),
+            "technical_requirements": session.technical_reasoning.get("technical_requirements", []),
+            "hypotheses": session.product_hypotheses[:6],
+            "memory": session.compact_memory,
+            "market_statistics": session.market_statistics,
+            "leaders": [
+                {
+                    "listing_id": str(item.listing_id),
+                    "title": item.listing_snapshot.get("title"),
+                    "price": item.listing_snapshot.get("price"),
+                    "currency": item.listing_snapshot.get("currency"),
+                    "score": item.score,
+                    "recommendation": item.recommendation,
+                    "summary": item.analysis.get("summary", "")[:240],
+                    "risks": item.analysis.get("risks", [])[:3],
+                }
+                for item in items
+            ],
+        }
+
+    async def _supervise(
         self, session: ResearchSession, model_info: dict[str, Any]
-    ) -> bool:
-        """Create exactly one durable plan before any marketplace URL is built."""
-        if session.search_plan:
-            return True
-        pricing = model_info.get("pricing") or {}
-        prompt_price = AiService._price(pricing.get("prompt"))
-        completion_price = AiService._price(pricing.get("completion"))
-        request_price = AiService._price(pricing.get("request")) or Decimal("0")
-        if prompt_price is None or completion_price is None:
-            session.status, session.stage, session.error_code, session.lease_expires_at = (
-                "failed",
-                "planning_pricing_unknown",
-                "pricing_unknown",
-                None,
-            )
+    ) -> dict[str, Any] | None:
+        prices = self._pricing(model_info)
+        if prices is None:
+            await self._finalize(session, model_info, fallback_reason="Цена Supervisor неизвестна.")
+            return None
+        prompt_price, completion_price, request_price = prices
+        estimate = prompt_price * 2_400 + completion_price * 1_000 + request_price
+        # Reserve a small final-comparison call. A supervisor never consumes the
+        # final safe step of a session's budget.
+        final_reserve = prompt_price * 2_200 + completion_price * 1_200 + request_price
+        if session.actual_cost_usd + estimate + final_reserve > session.budget_usd:
             await self._event(
-                session, "planning_error", "Невозможно безопасно оценить цену планирования."
+                session, "budget", "Остаток бюджета сохранён для итогового сравнения."
             )
             await self.db.commit()
-            return False
-        estimate = prompt_price * 1_200 + completion_price * 800 + request_price
-        if session.actual_cost_usd + estimate > session.budget_usd:
-            session.status, session.stage, session.error_code, session.lease_expires_at = (
-                "budget_exhausted",
-                "planning_budget_exhausted",
-                "budget_exhausted",
-                None,
+            await self._finalize(
+                session, model_info, fallback_reason="Лимит расходов почти исчерпан."
             )
-            await self._event(session, "budget", "Лимит расходов не покрывает планирование поиска.")
-            await self.db.commit()
-            return False
-        session.stage = "planning_search"
-        await self._event(session, "planning", "ИИ формирует поисковый план до обращения к OLX.")
+            return None
+        session.stage = "supervising"
         await self.db.commit()
         try:
-            client = OpenRouterClient(self.settings.openrouter_api_key or "")
-            plan, usage = await client.plan_search(model=session.model or "", query=session.query)
-        except Exception as exc:
-            session.status, session.stage, session.error_code, session.lease_expires_at = (
-                "failed",
-                "planning_failed",
-                "planning_failed",
-                None,
+            result, usage = await OpenRouterClient(
+                self.settings.openrouter_api_key or ""
+            ).supervise_research(
+                model=session.model or "",
+                query=session.query,
+                state=await self._supervisor_context(session),
             )
+        except Exception as exc:
             await self._event(
                 session,
-                "planning_error",
-                "Не удалось сформировать поисковый план; OLX не запускался.",
+                "supervisor_error",
+                "Supervisor недоступен; формирую итог по сохранённым результатам.",
                 {"type": type(exc).__name__},
             )
             await self.db.commit()
-            logger.warning(
-                "Search planning failed",
-                extra={
-                    "research_id": session.id,
-                    "event": "search_planning_failed",
-                    "status": type(exc).__name__,
-                },
+            await self._finalize(
+                session, model_info, fallback_reason="Supervisor временно недоступен."
             )
-            return False
+            return None
         actual = (
             prompt_price * usage["prompt_tokens"]
             + completion_price * usage["completion_tokens"]
             + request_price
         )
-        session.search_plan = plan.model_dump(mode="json")
-        session.planning_estimated_cost_usd = estimate
-        session.planning_actual_cost_usd = actual
-        session.planning_input_tokens = usage["prompt_tokens"]
-        session.planning_output_tokens = usage["completion_tokens"]
-        session.estimated_cost_usd += estimate
-        session.actual_cost_usd += actual
+        self._record_stage_usage(
+            session, "supervisor", estimate=estimate, actual=actual, usage=usage
+        )
+        decision = result.model_dump(mode="json")
+        decision["round"] = session.current_round
+        decision["created_at"] = utcnow().isoformat()
+        session.supervisor_decisions = [*session.supervisor_decisions, decision]
         session.lease_expires_at = utcnow() + timedelta(minutes=5)
-        if plan.needs_clarification:
-            session.status, session.stage, session.lease_expires_at = (
-                "needs_clarification",
-                "needs_clarification",
-                None,
-            )
-            await self._event(
-                session,
-                "clarification",
-                plan.clarification_question or "Уточните, какой тип товара нужен.",
-                {"plan": session.search_plan},
-            )
-        else:
-            await self._event(
-                session,
-                "planned",
-                "ИИ сформировал поисковые фразы и ограничения.",
-                {"plan": session.search_plan},
-            )
-        await self.db.commit()
-        logger.info(
-            "Search plan saved",
-            extra={
-                "research_id": session.id,
-                "event": "search_planning_completed",
-                "status": f"queries={len(plan.search_queries)}",
-            },
-        )
-        return not plan.needs_clarification
-
-    def _search_spec(self, phrase: str, plan: dict[str, Any]) -> OlxSearchSpec | None:
-        """Build OLX URL only from a compact planner phrase and structured price data."""
-        path_phrase = quote("-".join(phrase.split()), safe="-")
-        parsed = self.source.parse_search_url(f"https://www.olx.ua/uk/list/q-{path_phrase}/")
-        if not parsed.search:
-            return None
-        max_price = plan.get("max_price")
-        currency = plan.get("currency")
-        specification = parsed.search.model_copy(
-            update={
-                "price_to": Decimal(str(max_price)) if max_price else None,
-                "currency": currency if currency == "UAH" else None,
-            }
-        )
-        specification.current_url = self.source.build_search_url(specification)
-        return specification
-
-    async def _collect_olx(self, session: ResearchSession) -> list[ListingCandidate] | None:
-        queries = list(dict.fromkeys(session.search_plan.get("search_queries") or []))
-        if not queries:
-            session.status, session.stage, session.error_code, session.lease_expires_at = (
-                "failed",
-                "planning_invalid",
-                "planning_invalid",
-                None,
-            )
-            await self._event(session, "planning_error", "План не содержит поисковых фраз для OLX.")
-            await self.db.commit()
-            return None
-
-        candidates: list[ListingCandidate] = []
-        seen: set[str] = set()
-        failures: list[dict[str, str]] = []
-        # Each planned phrase gets its first page.  Only later pagination is bounded by
-        # the global limit, otherwise a broad first phrase can hide model-family variants.
-        max_candidates = max(session.max_items * 5, 25) * len(queries)
-        for phrase in queries:
-            specification = self._search_spec(phrase, session.search_plan)
-            if specification is None:
-                failures.append({"query": phrase, "code": "query_build_failed"})
-                continue
-            search_record: dict[str, Any] = {
-                "query": phrase,
-                "url": specification.current_url,
-                "price_to": str(specification.price_to) if specification.price_to else None,
-                "pages": [],
-            }
-            for page in range(1, self.settings.scan_max_pages + 1):
-                if page > 1 and len(candidates) >= max_candidates:
-                    break
-                result = await self.source.fetch_search_page(specification, page)
-                page_record = {
-                    "page": page,
-                    "state": result.state.value,
-                    "url": result.metadata.get("requested_url", specification.current_url),
-                    "final_url": result.metadata.get("final_url"),
-                    "results": len(result.data or []),
-                    "error_code": result.error_code,
-                }
-                search_record["pages"].append(page_record)
-                logger.info(
-                    "OLX planned search page processed",
-                    extra={
-                        "research_id": session.id,
-                        "event": "olx_planned_search",
-                        "status": (
-                            f"query={phrase}; page={page}; results={page_record['results']}; "
-                            f"state={result.state.value}; error={result.error_code or '-'}"
-                        ),
-                    },
-                )
-                if result.state is not SourceState.COMPLETE:
-                    failures.append(
-                        {"query": phrase, "code": result.error_code or result.state.value}
-                    )
-                    break
-                page_candidates = [
-                    ListingCandidate.model_validate(raw) for raw in result.data or []
-                ]
-                for candidate in page_candidates:
-                    identifier = candidate.source_listing_id or candidate.canonical_url
-                    if identifier in seen:
-                        continue
-                    seen.add(identifier)
-                    candidates.append(candidate)
-                if len(page_candidates) == 0:
-                    break
-            session.executed_searches = [*session.executed_searches, search_record]
-            await self.db.commit()
-
-        session.collected_count += len(candidates)
-        if not candidates:
-            session.status, session.stage, session.error_code, session.lease_expires_at = (
-                "failed",
-                "source_unavailable",
-                "search_no_verified_results",
-                None,
-            )
-            await self._event(
-                session,
-                "source_error",
-                "OLX не подтвердил релевантную выдачу ни для одной поисковой фразы.",
-                {"failures": failures},
-            )
-            await self.db.commit()
-            return None
         await self._event(
             session,
-            "collected",
-            f"Подтверждено кандидатов OLX: {len(candidates)}.",
-            {"queries": queries, "collected": len(candidates), "failures": failures},
+            "supervisor",
+            f"Supervisor: {result.reason}",
+            {"action": result.action, "round": session.current_round},
         )
         await self.db.commit()
-        return candidates
+        return decision
+
+    async def _finalize(
+        self,
+        session: ResearchSession,
+        model_info: dict[str, Any],
+        *,
+        fallback_reason: str | None = None,
+    ) -> None:
+        if session.final_comparison:
+            session.status, session.stage, session.finished_at, session.lease_expires_at = (
+                "completed",
+                "completed",
+                session.finished_at or utcnow(),
+                None,
+            )
+            await self.db.commit()
+            return
+        context = await self._supervisor_context(session)
+        prices = self._pricing(model_info)
+        comparison: dict[str, Any]
+        if prices is not None:
+            prompt_price, completion_price, request_price = prices
+            estimate = prompt_price * 2_200 + completion_price * 1_200 + request_price
+            if session.actual_cost_usd + estimate <= session.budget_usd:
+                session.stage = "final_comparison"
+                await self.db.commit()
+                try:
+                    result, usage = await OpenRouterClient(
+                        self.settings.openrouter_api_key or ""
+                    ).compare_finalists(
+                        model=session.model or "", query=session.query, state=context
+                    )
+                    actual = (
+                        prompt_price * usage["prompt_tokens"]
+                        + completion_price * usage["completion_tokens"]
+                        + request_price
+                    )
+                    self._record_stage_usage(
+                        session, "final_comparison", estimate=estimate, actual=actual, usage=usage
+                    )
+                    comparison = result.model_dump(mode="json")
+                except Exception as exc:
+                    fallback_reason = (
+                        fallback_reason or f"Итоговая модель недоступна ({type(exc).__name__})."
+                    )
+                    comparison = self._fallback_comparison(context, fallback_reason)
+            else:
+                comparison = self._fallback_comparison(
+                    context, fallback_reason or "Недостаточно бюджета для итоговой модели."
+                )
+        else:
+            comparison = self._fallback_comparison(
+                context, fallback_reason or "Цена итоговой модели неизвестна."
+            )
+        comparison["generated_at"] = utcnow().isoformat()
+        comparison["market_statistics"] = session.market_statistics
+        session.final_comparison = comparison
+        session.status, session.stage, session.finished_at, session.lease_expires_at = (
+            "completed",
+            "completed",
+            utcnow(),
+            None,
+        )
+        await self._event(
+            session, "completed", "Исследование завершено; сохранено сравнение вариантов."
+        )
+        await self.db.commit()
+
+    @staticmethod
+    def _fallback_comparison(context: dict[str, Any], reason: str) -> dict[str, Any]:
+        leaders = context.get("leaders") or []
+        best = leaders[0] if leaders else None
+        choice = (
+            {
+                "listing_id": best.get("listing_id"),
+                "title": best.get("title"),
+                "reason": "Наивысший сохранённый балл; итоговая модель не была вызвана.",
+            }
+            if best
+            else None
+        )
+        return {
+            "conclusion": reason,
+            "best_overall": choice,
+            "best_budget": choice,
+            "best_performance": None,
+            "safest": None,
+            "requires_clarification": [],
+            "avoid": [],
+        }
+
+    async def _market_statistics(self, session: ResearchSession) -> dict[str, Any]:
+        """Use each durable research item once; do not join historical listing versions."""
+        items = list(
+            await self.db.scalars(
+                select(ResearchItem).where(
+                    ResearchItem.session_id == session.id, ResearchItem.status == "complete"
+                )
+            )
+        )
+        priced = [
+            item
+            for item in items
+            if item.listing_snapshot.get("price") is not None
+            and str(item.listing_snapshot.get("currency") or "").upper() == "UAH"
+        ]
+        prices = sorted(Decimal(str(item.listing_snapshot["price"])) for item in priced)
+        if not prices:
+            return {
+                "sample_size": 0,
+                "currency": "UAH",
+                "comparable": False,
+                "reason": "Недостаточно подтверждённых цен.",
+            }
+        middle = len(prices) // 2
+        median = prices[middle] if len(prices) % 2 else (prices[middle - 1] + prices[middle]) / 2
+        return {
+            "sample_size": len(prices),
+            "currency": "UAH",
+            "min_price": str(prices[0]),
+            "median_price": str(median),
+            "max_price": str(prices[-1]),
+            "comparable": len(prices) >= 3 and bool(session.search_plan.get("model_family")),
+            "reason": (
+                "Статистика только по оценённым карточкам одного исследования; "
+                "сопоставимость конфигураций ограничена описаниями объявлений."
+            ),
+        }
 
     @staticmethod
     def _candidate_tokens(candidate: ListingCandidate) -> set[str]:
@@ -662,6 +1206,14 @@ class ResearchService:
             return "reject", "Объявление относится к другому типу товара или услуги."
         if not has_product:
             return "uncertain", "Тип товара не подтверждён карточкой выдачи."
+
+        exclusions = " ".join(
+            [*plan.get("hard_requirements", []), *plan.get("excluded_attributes", [])]
+        ).casefold()
+        if ("не amd" in exclusions or "без amd" in exclusions) and (
+            {"amd", "ryzen", "athlon"} & tokens
+        ):
+            return "reject", "Подтверждена запрещённая AMD-платформа."
 
         brand = str(plan.get("brand") or "").casefold()
         expected_brand = _BRAND_ALIASES.get(brand, {brand} if brand else set())
@@ -763,8 +1315,9 @@ class ResearchService:
             + completion_price * usage["completion_tokens"]
             + request_price
         )
-        session.estimated_cost_usd += estimate
-        session.actual_cost_usd += actual
+        self._record_stage_usage(
+            session, "relevance_check", estimate=estimate, actual=actual, usage=usage
+        )
         session.lease_expires_at = utcnow() + timedelta(minutes=5)
         if result.decision != "accept":
             await self._reject_before_analysis(session, candidate, result.reason)
@@ -874,8 +1427,9 @@ class ResearchService:
         item.actual_cost_usd = actual
         session.cursor += 1
         session.processed_count += 1
-        session.estimated_cost_usd += estimate
-        session.actual_cost_usd += actual
+        self._record_stage_usage(
+            session, "deep_analysis", estimate=estimate, actual=actual, usage=usage
+        )
         session.lease_expires_at = utcnow() + timedelta(minutes=5)
         if result.recommendation == "shortlist":
             session.accepted_count += 1

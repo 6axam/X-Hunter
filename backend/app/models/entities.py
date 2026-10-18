@@ -192,6 +192,17 @@ class ResearchSession(UuidPrimaryKeyMixin, TimestampMixin, Base):
     search_plan: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
     executed_searches: Mapped[list[dict[str, Any]]] = mapped_column(SAJSON, default=list)
     compact_memory: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    # Agent v2 keeps public, checkable conclusions only.  The fields are JSON so
+    # older sessions remain readable after migration and every completed stage is
+    # durable before the next model/OLX call starts.
+    technical_reasoning: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    product_hypotheses: Mapped[list[dict[str, Any]]] = mapped_column(SAJSON, default=list)
+    research_rounds: Mapped[list[dict[str, Any]]] = mapped_column(SAJSON, default=list)
+    supervisor_decisions: Mapped[list[dict[str, Any]]] = mapped_column(SAJSON, default=list)
+    market_statistics: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    final_comparison: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    stage_usage: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+    current_round: Mapped[int] = mapped_column(Integer, default=0)
     budget_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal("0.10"))
     estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal("0"))
     actual_cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), default=Decimal("0"))

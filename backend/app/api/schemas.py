@@ -202,6 +202,14 @@ class ResearchSessionResponse(BaseModel):
     search_plan: dict[str, Any]
     executed_searches: list[dict[str, Any]]
     compact_memory: dict[str, Any]
+    technical_reasoning: dict[str, Any]
+    product_hypotheses: list[dict[str, Any]]
+    research_rounds: list[dict[str, Any]]
+    supervisor_decisions: list[dict[str, Any]]
+    market_statistics: dict[str, Any]
+    final_comparison: dict[str, Any]
+    stage_usage: dict[str, Any]
+    current_round: int
     budget_usd: Decimal
     estimated_cost_usd: Decimal
     actual_cost_usd: Decimal

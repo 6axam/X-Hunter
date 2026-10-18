@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     openrouter_model: str | None = None
     openrouter_research_model: str | None = None
     openrouter_daily_budget_usd: str = "1.00"
+    research_max_rounds: int = 4
+    research_max_queries_per_round: int = 5
+    research_max_runtime_seconds: int = 720
 
     @field_validator("owner_telegram_id", mode="before")
     @classmethod
