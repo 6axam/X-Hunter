@@ -30,10 +30,12 @@ function ResearchHome({ draftQuery, onDraftQuery }: { draftQuery: string; onDraf
   const [budget, setBudget] = useState("0.10");
   const [model, setModel] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const normalizedBudget = budget.trim().replace(",", ".");
+  const budgetIsValid = /^\d+(\.\d{1,6})?$/.test(normalizedBudget);
   const markets = useQuery({ queryKey: ["marketplaces"], queryFn: api.marketplaces });
   const sessions = useQuery({ queryKey: ["research-sessions"], queryFn: api.researchSessions, refetchInterval: (query) => query.state.data?.some((item) => activeStatuses.has(item.status)) ? 3000 : false });
   const created = useMutation({
-    mutationFn: () => api.createResearch({ query: draftQuery.trim(), marketplaces, max_items: maxItems, budget_usd: budget, model: model.trim() || undefined }),
+    mutationFn: () => api.createResearch({ query: draftQuery.trim(), marketplaces, max_items: Math.min(50, maxItems), budget_usd: normalizedBudget, model: model.trim() || undefined }),
     onSuccess: (session) => {
       void client.invalidateQueries({ queryKey: ["research-sessions"] });
       navigate(`/research/${session.id}`);
@@ -53,12 +55,13 @@ function ResearchHome({ draftQuery, onDraftQuery }: { draftQuery: string; onDraf
       </div>
       <button type="button" className="composer__advanced" onClick={() => setAdvancedOpen((value) => !value)} aria-expanded={advancedOpen}><SlidersHorizontal size={16} />Параметры <ChevronRight size={16} /></button>
       {advancedOpen && <div className="composer__controls">
-        <label>Объявлений<input type="number" min="1" max="100" value={maxItems} onChange={(event) => setMaxItems(Math.max(1, Number(event.target.value) || 1))} /></label>
+        <label>Объявлений<input type="number" min="1" max="50" value={maxItems} onChange={(event) => setMaxItems(Math.min(50, Math.max(1, Number(event.target.value) || 1)))} /></label>
         <label>Лимит, $<input inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></label>
         <label className="composer__model">Модель OpenRouter <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Из .env, если пусто" /></label>
       </div>}
+      {!budgetIsValid && <div className="error-block">Лимит укажите числом, например 0.10.</div>}
       {created.error && <div className="error-block">{created.error instanceof ApiError ? created.error.message : "Не удалось создать исследование."}</div>}
-      <Button className="composer__submit" onClick={() => created.mutate()} disabled={draftQuery.trim().length < 3 || marketplaces.length === 0 || created.isPending}>{created.isPending ? "Создаю…" : "Искать"}<Play size={17} /></Button>
+      <Button className="composer__submit" onClick={() => created.mutate()} disabled={draftQuery.trim().length < 3 || marketplaces.length === 0 || !budgetIsValid || created.isPending}>{created.isPending ? "Создаю…" : "Искать"}<Play size={17} /></Button>
     </Card>
     <div className="section-heading"><h2>Исследования</h2><span>{sessions.data?.length ?? 0}</span></div>
     {sessions.isLoading ? <div className="stack"><Skeleton className="h-36" /><Skeleton className="h-36" /></div> : <div className="stack">{sessions.data?.length ? sessions.data.map((session) => <ResearchSessionCard key={session.id} session={session} />) : <EmptyResearches />}</div>}
