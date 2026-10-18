@@ -84,7 +84,8 @@
 
 ## Проверено
 
-- Диагностика: backend `ruff check` и format-check проходят; 62 `pytest` проходят, включая ZIP-контракт, owner scope, маскирование, ограничение объёма, последовательность после restart и полноту стадий. Миграция прошла `upgrade head`, `alembic check` и `downgrade base` на чистой SQLite-базе. Frontend typecheck, 5 Vitest-тестов и production build проходят; lint-скрипт по-прежнему не исполняется, потому что `eslint` не указан в frontend-зависимостях.
+- Диагностика: backend `ruff check` и format-check проходят; 62 `pytest` проходят, включая ZIP-контракт, owner scope, маскирование, ограничение объёма, последовательность после restart и полноту стадий. Миграция прошла `upgrade head`, `alembic check` и `downgrade base` на чистой SQLite-базе, а рабочая PostgreSQL-база обновлена до `c3d4e5f6a7b8 (head)`. Frontend typecheck, 5 Vitest-тестов и production build проходят; lint-скрипт по-прежнему не исполняется, потому что `eslint` не указан в frontend-зависимостях.
+- Обновлённые Docker-сервисы `api`, `worker`, `scheduler` и `gateway` запущены. `/api/v1/ready` возвращает database/redis/source = true; живой owner-scoped endpoint вернул ZIP с `trace.jsonl`, `summary.json`, `manifest.json`, `report.md`, совпадающим research ID и `Cache-Control: private, no-store`.
 - `PROJECT_PLAN.md` прочитан полностью, основной контракт реализации находится в разделе 22.
 - В текущем каталоге и доступных каталогах пользователя отсутствует `OLX_HUNTER_UI_PROMPT.md`.
 - `ruff check` и форматирование backend проходят.
