@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, CircleDollarSign, ExternalLink, Pause, Play, RotateCcw, SlidersHorizontal, StopCircle, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ListingCard } from "../components/ListingCard";
 import { Button, Card, Pill, Skeleton } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { telegram } from "../lib/telegram";
@@ -138,10 +139,7 @@ function PlanRow({ label, values }: { label: string; values: string[] }) { retur
 
 function ResearchListingCard({ item, onOpen }: { item: ResearchItem; onOpen: () => void }) {
   const analysis = item.analysis;
-  return <button className="listing-card research-listing-card" onClick={onOpen}>
-    <div className="listing-card__placeholder">{item.score ?? "—"}<small>/100</small></div>
-    <div className="listing-card__body"><div className="listing-card__top"><Pill tone={item.recommendation === "shortlist" ? "green" : item.recommendation === "reject" ? "danger" : "amber"}>{recommendationLabels[item.recommendation ?? ""] ?? "В обработке"}</Pill><span>{item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : ""}</span></div><h3>{item.listing_snapshot.title ?? "Объявление"}</h3><strong>{priceText(item)}</strong><p>{analysis.summary ?? (item.status === "error" ? "Не удалось получить оценку." : "Ожидает оценки.")}</p>{analysis.risks?.[0] && <span className="risk-tag">{analysis.risks[0]}</span>}</div>
-  </button>;
+  return <ListingCard title={item.listing_snapshot.title ?? "Объявление"} price={priceText(item)} label={recommendationLabels[item.recommendation ?? ""] ?? "В обработке"} tone={item.recommendation === "shortlist" ? "green" : item.recommendation === "reject" ? "danger" : "amber"} score={item.score} summary={analysis.summary ?? (item.status === "error" ? "Не удалось получить оценку." : "Ожидает оценки.")} risk={analysis.risks?.[0]} onOpen={onOpen} />;
 }
 
 function ResearchItemDetail({ item, onClose }: { item: ResearchItem; onClose: () => void }) {

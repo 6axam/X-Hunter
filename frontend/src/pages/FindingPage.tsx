@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Bookmark, ExternalLink, ImageOff, MapPin } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Button, Card, Pill, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
 import { telegram } from "../lib/telegram";
@@ -20,6 +20,7 @@ function formatDate(value: string | null) {
 
 export function FindingPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const client = useQueryClient();
   const finding = useQuery({ queryKey: ["finding", id], queryFn: () => api.finding(id) });
   const save = useMutation({ mutationFn: () => api.patchFinding(id, { saved: !finding.data?.saved }), onSuccess: () => { void client.invalidateQueries({ queryKey: ["finding", id] }); void client.invalidateQueries({ queryKey: ["findings"] }); } });
@@ -31,5 +32,5 @@ export function FindingPage() {
     ...(item.condition ? [["Состояние", item.condition] as const] : []),
     ...Object.entries(item.attributes).filter(([key]) => key !== "seller_profile_url"),
   ];
-  return <section className="detail"><Link to="/findings" className="back-link"><ArrowLeft size={18} />К находкам</Link><Card className="detail-card"><div className="detail-card__media">{readyMedia.length ? <div className="media-gallery">{readyMedia.map((media) => <img key={media.id} src={`/api/v1/media/${media.id}`} alt={item.title} />)}</div> : <div className="image-placeholder"><ImageOff size={30} /><span>{item.cover_media_id ? "Изображение загружается" : "Фото не сохранено"}</span></div>}</div><div className="detail-card__content"><div className="detail-card__meta"><Pill tone="green">Подходит</Pill>{item.city && <span><MapPin size={15} />{item.city}</span>}</div><h1>{item.title}</h1><strong className="detail-price">{formatPrice(item)}</strong>{item.published_at && <p className="detail-date">Опубликовано: {formatDate(item.published_at)}</p>}{properties.length > 0 && <dl className="finding-properties">{properties.map(([key, value]) => <div key={key}><dt>{attributeLabels[key] ?? key}</dt><dd>{value}</dd></div>)}</dl>}<p className="description">{item.description || "Полное описание не было получено."}</p><div className="detail-actions"><Button onClick={() => telegram.open(item.canonical_url)}><ExternalLink size={18} />Открыть в OLX</Button><Button className="button--secondary" onClick={() => save.mutate()}><Bookmark size={18} fill={item.saved ? "currentColor" : "none"} />{item.saved ? "Сохранено" : "Сохранить"}</Button></div></div></Card></section>;
+  return <section className="detail"><button className="back-link" onClick={() => navigate(-1)}><ArrowLeft size={18} />Назад</button><Card className="detail-card"><div className="detail-card__media">{readyMedia.length ? <div className="media-gallery">{readyMedia.map((media) => <img key={media.id} src={`/api/v1/media/${media.id}`} alt={item.title} />)}</div> : <div className="image-placeholder"><ImageOff size={30} /><span>{item.cover_media_id ? "Изображение загружается" : "Фото не сохранено"}</span></div>}</div><div className="detail-card__content"><div className="detail-card__meta"><Pill tone="green">Подходит</Pill>{item.city && <span><MapPin size={15} />{item.city}</span>}</div><h1>{item.title}</h1><strong className="detail-price">{formatPrice(item)}</strong>{item.published_at && <p className="detail-date">Опубликовано: {formatDate(item.published_at)}</p>}{properties.length > 0 && <dl className="finding-properties">{properties.map(([key, value]) => <div key={key}><dt>{attributeLabels[key] ?? key}</dt><dd>{value}</dd></div>)}</dl>}<p className="description">{item.description || "Полное описание не было получено."}</p><div className="detail-actions"><Button onClick={() => telegram.open(item.canonical_url)}><ExternalLink size={18} />Открыть в OLX</Button><Button className="button--secondary" onClick={() => save.mutate()}><Bookmark size={18} fill={item.saved ? "currentColor" : "none"} />{item.saved ? "Сохранено" : "Сохранить"}</Button></div></div></Card></section>;
 }
