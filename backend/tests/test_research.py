@@ -290,6 +290,8 @@ async def test_agent_v2_runs_durable_round_and_final_comparison(
     )
 
     class FakeClient:
+        supervisor_calls = 0
+
         def __init__(self, *_: object) -> None:
             pass
 
@@ -366,6 +368,23 @@ async def test_agent_v2_runs_durable_round_and_final_comparison(
             ), {"prompt_tokens": 10, "completion_tokens": 10, "cached_input_tokens": 0}
 
         async def supervise_research(self, **_: object):
+            FakeClient.supervisor_calls += 1
+            if FakeClient.supervisor_calls == 1:
+                return SupervisorDecision(
+                    action="REFINE_SEARCH",
+                    reason="Нужно проверить альтернативную линейку.",
+                    next_strategies=[
+                        SearchStrategy(
+                            phrase="Dell OptiPlex Micro",
+                            category="mini_pc",
+                            filters={},
+                            priority=1,
+                            expected_result_type="mini PC",
+                            goal="Проверить альтернативу",
+                            rationale="Нужна реальная альтернатива.",
+                        )
+                    ],
+                ), {"prompt_tokens": 10, "completion_tokens": 10, "cached_input_tokens": 0}
             return SupervisorDecision(
                 action="FINALIZE",
                 reason="Есть подходящий подтверждённый вариант.",
@@ -421,6 +440,12 @@ async def test_agent_v2_runs_durable_round_and_final_comparison(
     assert session.technical_reasoning["product_category"] == "mini_pc"
     assert session.product_hypotheses[0]["family_or_model"] == "ThinkCentre Tiny"
     assert session.research_rounds[0]["status"] == "completed"
-    assert session.supervisor_decisions[0]["action"] == "FINALIZE"
+    assert len(session.research_rounds) == 2
+    assert session.supervisor_decisions[0]["action"] == "REFINE_SEARCH"
+    assert session.supervisor_decisions[1]["action"] == "FINALIZE"
+    assert [search["query"] for search in session.executed_searches] == [
+        "Intel mini pc",
+        "Dell OptiPlex Micro",
+    ]
     assert session.final_comparison["best_overall"]["title"] == candidate.title
     assert session.stage_usage["technical_reasoning"]["calls"] == 1

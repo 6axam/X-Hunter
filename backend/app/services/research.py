@@ -309,7 +309,11 @@ class ResearchService:
         )
         await self.db.commit()
         while session.status == "running":
-            if session.started_at and utcnow() - session.started_at > timedelta(
+            current_time = utcnow()
+            started_at = session.started_at
+            if started_at and started_at.tzinfo is None:
+                current_time = current_time.replace(tzinfo=None)
+            if started_at and current_time - started_at > timedelta(
                 seconds=self.settings.research_max_runtime_seconds
             ):
                 await self._event(
@@ -1226,6 +1230,8 @@ class ResearchService:
         family = str(plan.get("model_family") or "").casefold().replace(" ", "")
         expected_family = _FAMILY_ALIASES.get(family, {family} if family else set())
         has_family = bool(expected_family & tokens)
+        if not expected_brand and not expected_family:
+            return "accept", "Тип товара подтверждён карточкой."
         if expected_brand and expected_brand & tokens and (not expected_family or has_family):
             return "accept", "Тип товара, бренд и модельное семейство подтверждены."
         if has_family:

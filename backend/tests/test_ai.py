@@ -10,6 +10,7 @@ from app.ai.openrouter import (
     OpenRouterClient,
     ResearchAnalysisResult,
     SearchPlan,
+    TechnicalReasoning,
     strict_json_schema,
 )
 from app.api.errors import AppError
@@ -88,6 +89,23 @@ def test_search_plan_supports_thinkpad_budget_and_compact_queries() -> None:
     assert plan.max_price == 5000
     assert plan.search_queries == ["Lenovo ThinkPad", "ThinkPad T480"]
     assert all("доккер" not in item.casefold() for item in plan.search_queries)
+
+
+def test_agent_reasoning_and_supervisor_use_strict_public_json() -> None:
+    client = OpenRouterClient("secret")
+    reasoning = client.build_technical_reasoning_payload(
+        model="vendor/model", query="мини-ПК до 5000 грн, не AMD, для Docker"
+    )
+    supervisor = client.build_supervisor_payload(
+        model="vendor/model", query="мини-ПК", state={"leaders": [], "executed_queries": []}
+    )
+
+    assert reasoning["response_format"]["json_schema"]["strict"] is True
+    assert "не выдумывай" in reasoning["messages"][0]["content"].casefold()
+    assert supervisor["response_format"]["json_schema"]["strict"] is True
+    schema = strict_json_schema(TechnicalReasoning)
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == set(schema["properties"])
 
 
 @pytest.mark.asyncio

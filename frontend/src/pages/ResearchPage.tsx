@@ -100,6 +100,7 @@ function ResearchDetail() {
     <ResearchStatistics session={session} />
     <ResearchActions session={session} pending={action.isPending} onAction={(value) => action.mutate(value)} />
     <ResearchPlan session={session} />
+    <ResearchAgentInsights session={session} />
     <div className="section-heading"><h2>Результаты</h2><span>{items.data?.length ?? 0}</span></div>
     <div className="result-filters" role="tablist" aria-label="Фильтр результатов">
       <button className={filter === "shortlist" ? "active" : ""} onClick={() => setFilter("shortlist")}>Подходят</button>
@@ -132,6 +133,25 @@ function ResearchPlan({ session }: { session: ResearchSession }) {
     {plan.soft_requirements?.length ? <PlanRow label="Условия" values={plan.soft_requirements} /> : null}
     <PlanRow label="OLX" values={plan.search_queries ?? []} />
     {plan.clarification_question && <p className="research-risk">Нужно уточнить: {plan.clarification_question}</p>}
+  </div></details>;
+}
+
+function ResearchAgentInsights({ session }: { session: ResearchSession }) {
+  const reasoning = session.technical_reasoning;
+  const final = session.final_comparison;
+  const latestDecision = session.supervisor_decisions.at(-1);
+  const market = session.market_statistics;
+  const hasContent = reasoning.product_category || session.product_hypotheses.length || session.research_rounds.length || final.conclusion;
+  if (!hasContent) return null;
+  return <details className="research-plan"><summary>Ход исследования <ChevronRight size={17} /></summary><div className="research-plan__content">
+    {reasoning.product_category && <p><strong>{reasoning.product_category}</strong>{reasoning.user_goal ? ` · ${reasoning.user_goal}` : ""}</p>}
+    {reasoning.hard_constraints?.length ? <PlanRow label="Жёсткие условия" values={reasoning.hard_constraints} /> : null}
+    {reasoning.technical_requirements?.length ? <PlanRow label="Технически важно" values={reasoning.technical_requirements} /> : null}
+    {session.product_hypotheses.length ? <div className="plan-row"><span>Направления</span><div>{session.product_hypotheses.map((item) => <Pill key={item.family_or_model}>{item.family_or_model}</Pill>)}</div></div> : null}
+    {session.research_rounds.length ? <p>Раунд {session.current_round || session.research_rounds.length} из поиска: {session.research_rounds.map((item) => item.strategies?.map((strategy) => strategy.phrase).filter(Boolean).join(", ")).filter(Boolean).join(" · ")}</p> : null}
+    {latestDecision && <p><strong>Решение агента:</strong> {latestDecision.reason}</p>}
+    {market.sample_size ? <p>Рынок: {market.sample_size} оценённых цен, {market.min_price}–{market.max_price} {market.currency}; медиана {market.median_price}. {market.comparable ? "Выборка частично сопоставима." : "Сопоставимость недостаточна для точной рыночной цены."}</p> : null}
+    {final.conclusion && <section className="analysis-group"><h3>Итог агента</h3><p>{final.conclusion}</p>{final.best_overall?.title && <p><strong>Основной вариант:</strong> {final.best_overall.title}. {final.best_overall.reason}</p>}{final.requires_clarification?.length ? <AnalysisGroup title="Уточнить перед покупкой" values={final.requires_clarification} /> : null}</section>}
   </div></details>;
 }
 

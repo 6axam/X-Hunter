@@ -66,6 +66,14 @@ export type ResearchSession = {
   search_plan: { product_type?: string; brand?: string | null; model_family?: string | null; max_price?: number | null; currency?: string | null; purpose?: string | null; search_queries?: string[]; hard_requirements?: string[]; soft_requirements?: string[]; clarification_question?: string | null };
   executed_searches: Array<{ query: string; url: string; price_to?: string | null; pages: Array<{ page: number; state: string; url: string; final_url?: string | null; results: number; error_code?: string | null }> }>;
   compact_memory: Record<string, unknown>; budget_usd: string; estimated_cost_usd: string; actual_cost_usd: string;
+  technical_reasoning: { product_category?: string; user_goal?: string; hard_constraints?: string[]; soft_preferences?: string[]; technical_requirements?: string[]; unknowns?: string[] };
+  product_hypotheses: Array<{ manufacturer?: string | null; family_or_model: string; rationale: string; priority: number; confidence: number }>;
+  research_rounds: Array<{ number: number; status: string; collected_count?: number; evaluated_count?: number; strategies?: Array<{ phrase: string; goal?: string }> }>;
+  supervisor_decisions: Array<{ action: string; reason: string; round?: number }>;
+  market_statistics: { sample_size?: number; currency?: string; min_price?: string; median_price?: string; max_price?: string; comparable?: boolean; reason?: string };
+  final_comparison: { conclusion?: string; best_overall?: { title?: string | null; reason?: string } | null; best_budget?: { title?: string | null; reason?: string } | null; requires_clarification?: string[]; avoid?: string[] };
+  stage_usage: Record<string, { actual_cost_usd?: string; calls?: number }>;
+  current_round: number;
   planning_estimated_cost_usd: string; planning_actual_cost_usd: string; planning_input_tokens: number; planning_output_tokens: number;
   error_code: string | null; started_at: string | null; finished_at: string | null; created_at: string; updated_at: string;
 };
