@@ -1,44 +1,171 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Pause, Play, RotateCcw, Sparkles, StopCircle } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, ChevronRight, CircleDollarSign, ExternalLink, Pause, Play, RotateCcw, SlidersHorizontal, StopCircle, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Card, Pill, Skeleton, Button } from "../components/ui";
+import { Button, Card, Pill, Skeleton } from "../components/ui";
 import { api, ApiError } from "../lib/api";
-import type { ResearchItem, ResearchSession } from "../types";
+import { telegram } from "../lib/telegram";
+import type { Marketplace, ResearchEvent, ResearchItem, ResearchSession } from "../types";
+
+const activeStatuses = new Set(["queued", "running"]);
+const recommendationLabels: Record<string, string> = {
+  shortlist: "Подходят",
+  needs_details: "Нужно уточнить",
+  reject: "Отклонены",
+};
 
 export function ResearchPage() {
+  const { id } = useParams();
+  const [draftQuery, setDraftQuery] = useState("");
+  if (id) return <ResearchDetail />;
+  return <ResearchHome draftQuery={draftQuery} onDraftQuery={setDraftQuery} />;
+}
+
+function ResearchHome({ draftQuery, onDraftQuery }: { draftQuery: string; onDraftQuery: (value: string) => void }) {
   const client = useQueryClient();
   const navigate = useNavigate();
-  const { id } = useParams();
-  const [query, setQuery] = useState("");
+  const [marketplaces, setMarketplaces] = useState<string[]>(["olx"]);
+  const [maxItems, setMaxItems] = useState(15);
+  const [budget, setBudget] = useState("0.10");
   const [model, setModel] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const markets = useQuery({ queryKey: ["marketplaces"], queryFn: api.marketplaces });
-  const sessions = useQuery({ queryKey: ["research-sessions"], queryFn: api.researchSessions, refetchInterval: 3000 });
+  const sessions = useQuery({ queryKey: ["research-sessions"], queryFn: api.researchSessions, refetchInterval: (query) => query.state.data?.some((item) => activeStatuses.has(item.status)) ? 3000 : false });
   const created = useMutation({
-    mutationFn: () => api.createResearch({ query, marketplaces: ["olx"], max_items: 15, budget_usd: "0.10", model: model || undefined }),
-    onSuccess: (session) => { void client.invalidateQueries({ queryKey: ["research-sessions"] }); navigate(`/research/${session.id}`); },
+    mutationFn: () => api.createResearch({ query: draftQuery.trim(), marketplaces, max_items: maxItems, budget_usd: budget, model: model.trim() || undefined }),
+    onSuccess: (session) => {
+      void client.invalidateQueries({ queryKey: ["research-sessions"] });
+      navigate(`/research/${session.id}`);
+    },
   });
-  const selected = useQuery({ queryKey: ["research", id], queryFn: () => api.research(id!), enabled: Boolean(id), refetchInterval: 2500 });
-  const items = useQuery({ queryKey: ["research-items", id], queryFn: () => api.researchItems(id!), enabled: Boolean(id), refetchInterval: 2500 });
-  const events = useQuery({ queryKey: ["research-events", id], queryFn: () => api.researchEvents(id!), enabled: Boolean(id), refetchInterval: 2500 });
-  const action = useMutation({ mutationFn: (value: "pause" | "resume" | "cancel") => api.researchAction(id!, value), onSuccess: () => void client.invalidateQueries({ queryKey: ["research"] }) });
+  const toggleMarket = (market: Marketplace) => {
+    if (!market.available) return;
+    setMarketplaces((current) => current.includes(market.id) ? current.filter((id) => id !== market.id) : [...current, market.id]);
+  };
 
-  if (id) return <ResearchDetail session={selected.data} items={items.data ?? []} events={events.data ?? []} loading={selected.isLoading} onAction={(value) => action.mutate(value)} />;
-  return <section>
-    <header className="page-header"><div><span className="eyebrow">Автономный агент</span><h1>ИИ-исследование</h1></div><Sparkles color="var(--accent)" /></header>
-    <Card className="research-form"><h2>Что ищем?</h2><p>Агент последовательно проверит объявления, сохранит причины и составит рейтинг.</p><textarea value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Например: электровелосипед до 30 000 грн, для города, без ремонта" /><label>Model ID OpenRouter (необязательно, если задан в .env)<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Выберите существующий ID из каталога" /></label><div className="market-list">{markets.data?.marketplaces.map((market) => <span key={market.id} className={market.available ? "market market--active" : "market"}>{market.label}{!market.available && " · скоро"}</span>)}</div>{created.error && <div className="error-block">{created.error instanceof ApiError ? created.error.message : "Не удалось создать исследование."}</div>}<Button onClick={() => created.mutate()} disabled={query.trim().length < 3 || created.isPending}>{created.isPending ? "Создаю…" : "Начать исследование"}<Play size={17} /></Button></Card>
-    <h2 className="section-title">История</h2>{sessions.isLoading ? <Skeleton className="h-36" /> : <div className="stack">{sessions.data?.length ? sessions.data.map((session) => <SessionCard key={session.id} session={session} />) : <Card className="empty-inline"><p>Пока нет ИИ-исследований.</p></Card>}</div>}
+  return <section className="screen research-home">
+    <header className="screen-heading"><div><h1>ИИ-поиск</h1><p>Запрос и условия для поиска на площадках.</p></div></header>
+    <Card className="composer">
+      <label className="composer__query"><span className="sr-only">Что ищем</span><textarea value={draftQuery} onChange={(event) => onDraftQuery(event.target.value)} placeholder="Например: ThinkPad до 5 000 грн для Docker и Python" rows={3} /></label>
+      <div className="source-chips" aria-label="Маркетплейсы">
+        {markets.data?.marketplaces.map((market) => <button type="button" key={market.id} className={`source-chip ${marketplaces.includes(market.id) ? "source-chip--selected" : ""}`} disabled={!market.available} onClick={() => toggleMarket(market)}>{market.label}{!market.available && " · скоро"}</button>)}
+      </div>
+      <button type="button" className="composer__advanced" onClick={() => setAdvancedOpen((value) => !value)} aria-expanded={advancedOpen}><SlidersHorizontal size={16} />Параметры <ChevronRight size={16} /></button>
+      {advancedOpen && <div className="composer__controls">
+        <label>Объявлений<input type="number" min="1" max="100" value={maxItems} onChange={(event) => setMaxItems(Math.max(1, Number(event.target.value) || 1))} /></label>
+        <label>Лимит, $<input inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} /></label>
+        <label className="composer__model">Модель OpenRouter <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Из .env, если пусто" /></label>
+      </div>}
+      {created.error && <div className="error-block">{created.error instanceof ApiError ? created.error.message : "Не удалось создать исследование."}</div>}
+      <Button className="composer__submit" onClick={() => created.mutate()} disabled={draftQuery.trim().length < 3 || marketplaces.length === 0 || created.isPending}>{created.isPending ? "Создаю…" : "Искать"}<Play size={17} /></Button>
+    </Card>
+    <div className="section-heading"><h2>Исследования</h2><span>{sessions.data?.length ?? 0}</span></div>
+    {sessions.isLoading ? <div className="stack"><Skeleton className="h-36" /><Skeleton className="h-36" /></div> : <div className="stack">{sessions.data?.length ? sessions.data.map((session) => <ResearchSessionCard key={session.id} session={session} />) : <EmptyResearches />}</div>}
   </section>;
 }
 
-function SessionCard({ session }: { session: ResearchSession }) { return <Link to={`/research/${session.id}`}><Card className="research-session"><div><Pill>{statusLabel(session.status)}</Pill><h2>{session.query}</h2><p>{session.processed_count}/{session.max_items} объявлений · {session.actual_cost_usd}$ из {session.budget_usd}$</p></div><strong>{session.accepted_count} лидеров</strong></Card></Link>; }
-
-function ResearchDetail({ session, items, events, loading, onAction }: { session?: ResearchSession; items: ResearchItem[]; events: { id: string; message: string; created_at: string }[]; loading: boolean; onAction: (value: "pause" | "resume" | "cancel") => void }) {
-  if (loading || !session) return <Skeleton className="h-96" />;
-  const active = session.status === "running" || session.status === "queued";
-  const plan = session.search_plan;
-  return <section className="research-detail"><Link className="back-link" to="/research">← К исследованиям</Link><header className="page-header"><div><span className="eyebrow">{statusLabel(session.status)}</span><h1>{session.query}</h1></div></header><Card className="research-summary"><div><b>Этап:</b> {session.stage}</div><div><b>Прогресс:</b> {session.processed_count}/{session.max_items}</div><div><b>Расход:</b> {session.actual_cost_usd}$ факт · {session.estimated_cost_usd}$ оценка</div><div className="research-actions">{active && <Button className="button--secondary" onClick={() => onAction("pause")}><Pause size={16} />Пауза</Button>}{session.status === "paused" && <Button onClick={() => onAction("resume")}><RotateCcw size={16} />Продолжить</Button>}{active && <Button className="button--ghost" onClick={() => onAction("cancel")}><StopCircle size={16} />Стоп</Button>}</div></Card>{plan.product_type && <Card className="research-plan"><span className="eyebrow">Как агент понял запрос</span><h2>{[plan.brand, plan.model_family, plan.product_type].filter(Boolean).join(" · ")}</h2><p>{plan.max_price ? `Бюджет: до ${plan.max_price} ${plan.currency ?? ""}` : "Бюджет в запросе не задан"}{plan.purpose ? ` · Цель: ${plan.purpose}` : ""}</p><div><b>Поисковые фразы OLX:</b>{plan.search_queries?.map((phrase) => <span key={phrase} className="market market--active">{phrase}</span>)}</div>{plan.hard_requirements?.length ? <p><b>Жёсткие условия:</b> {plan.hard_requirements.join("; ")}</p> : null}<p>OLX: найдено {session.collected_count}, отсечено до подробного ИИ-анализа {session.rejected_before_analysis_count}, подробно оценено {session.processed_count}.</p>{session.planning_actual_cost_usd !== "0.000000" && <p>Планирование: {session.planning_actual_cost_usd}$ · {session.planning_input_tokens + session.planning_output_tokens} токенов.</p>}{plan.clarification_question ? <p className="research-risk">Нужно уточнение: {plan.clarification_question}</p> : null}</Card>}<h2 className="section-title">Рейтинг</h2><div className="stack">{items.length ? items.map((item) => <ResearchItemCard key={item.id} item={item} />) : <Card className="empty-inline"><p>Лоты появятся здесь по мере последовательной оценки.</p></Card>}</div><h2 className="section-title">Ход работы</h2><Card className="research-events">{events.map((event) => <p key={event.id}>{event.message}</p>)}</Card></section>;
+function ResearchSessionCard({ session }: { session: ResearchSession }) {
+  return <Link className="research-session-card" to={`/research/${session.id}`}>
+    <div className="research-session-card__top"><Pill tone={statusTone(session.status)}>{statusLabel(session.status)}</Pill><time>{relativeDate(session.updated_at)}</time></div>
+    <h2>{session.query}</h2>
+    <div className="research-session-card__meta"><span>{progressLabel(session)}</span><span><CircleDollarSign size={14} />{formatUsd(session.actual_cost_usd)}</span><ChevronRight size={18} /></div>
+  </Link>;
 }
 
-function ResearchItemCard({ item }: { item: ResearchItem }) { const a = item.analysis; return <Card className="research-item"><div className="research-item__top"><Pill>{item.score ?? "…"}/100</Pill><span>{item.recommendation === "shortlist" ? "В лидерах" : item.recommendation === "reject" ? "Отклонено" : "Нужно уточнить"}</span></div><h2>{item.listing_snapshot.title ?? "Объявление"}</h2><strong>{item.listing_snapshot.price} {item.listing_snapshot.currency}</strong><p>{a.summary ?? (item.status === "error" ? "Не удалось получить оценку модели." : "Ожидает оценки.")}</p>{a.risks?.length ? <p className="research-risk">Риски: {a.risks.join("; ")}</p> : null}<div className="research-item__footer"><span>Уверенность: {item.confidence ?? "—"}</span>{item.listing_snapshot.url && <a href={item.listing_snapshot.url} target="_blank" rel="noreferrer">OLX <ExternalLink size={14} /></a>}</div></Card>; }
-function statusLabel(status: string) { return ({ queued: "В очереди", running: "Исследуем", completed: "Готово", paused: "Пауза", waiting_configuration: "Нужна настройка", needs_clarification: "Нужно уточнение", budget_exhausted: "Лимит исчерпан", failed: "Ошибка", cancelled: "Остановлено" } as Record<string, string>)[status] ?? status; }
+function EmptyResearches() {
+  return <Card className="empty-inline"><strong>Исследований пока нет</strong><p>Сформулируйте запрос выше — история появится здесь.</p></Card>;
+}
+
+function ResearchDetail() {
+  const { id = "" } = useParams();
+  const navigate = useNavigate();
+  const client = useQueryClient();
+  const [filter, setFilter] = useState<"shortlist" | "needs_details" | "rejected">("shortlist");
+  const [selectedItem, setSelectedItem] = useState<ResearchItem | null>(null);
+  const selected = useQuery({ queryKey: ["research", id], queryFn: () => api.research(id), refetchInterval: (query) => query.state.data && activeStatuses.has(query.state.data.status) ? 2500 : false });
+  const items = useQuery({ queryKey: ["research-items", id], queryFn: () => api.researchItems(id), enabled: Boolean(id), refetchInterval: () => selected.data && activeStatuses.has(selected.data.status) ? 2500 : false });
+  const events = useQuery({ queryKey: ["research-events", id], queryFn: () => api.researchEvents(id), enabled: Boolean(id), refetchInterval: () => selected.data && activeStatuses.has(selected.data.status) ? 2500 : false });
+  const action = useMutation({ mutationFn: (value: "pause" | "resume" | "cancel") => api.researchAction(id, value), onSuccess: () => void Promise.all([client.invalidateQueries({ queryKey: ["research", id] }), client.invalidateQueries({ queryKey: ["research-sessions"] })]) });
+  const visibleItems = useMemo(() => (items.data ?? []).filter((item) => {
+    if (filter === "rejected") return item.recommendation === "reject" || item.status === "error";
+    return item.recommendation === filter;
+  }).sort((a, b) => (b.score ?? -1) - (a.score ?? -1)), [filter, items.data]);
+
+  if (selected.isLoading || !selected.data) return <section className="screen"><Skeleton className="h-96" /></section>;
+  const session = selected.data;
+  return <section className="screen research-detail-screen">
+    <button className="back-link" onClick={() => navigate(-1)}><ArrowLeft size={18} />Назад</button>
+    <header className="detail-heading"><div><Pill tone={statusTone(session.status)}>{statusLabel(session.status)}</Pill><h1>{session.query}</h1></div></header>
+    <ResearchStatistics session={session} />
+    <ResearchActions session={session} pending={action.isPending} onAction={(value) => action.mutate(value)} />
+    <ResearchPlan session={session} />
+    <div className="section-heading"><h2>Результаты</h2><span>{items.data?.length ?? 0}</span></div>
+    <div className="result-filters" role="tablist" aria-label="Фильтр результатов">
+      <button className={filter === "shortlist" ? "active" : ""} onClick={() => setFilter("shortlist")}>Подходят</button>
+      <button className={filter === "needs_details" ? "active" : ""} onClick={() => setFilter("needs_details")}>Уточнить</button>
+      <button className={filter === "rejected" ? "active" : ""} onClick={() => setFilter("rejected")}>Отклонены</button>
+    </div>
+    <div className="stack research-results">{visibleItems.length ? visibleItems.map((item) => <ResearchListingCard key={item.id} item={item} onOpen={() => setSelectedItem(item)} />) : <Card className="empty-inline"><p>{filter === "shortlist" ? "Подходящих предложений пока нет." : "В этой категории пока пусто."}</p></Card>}</div>
+    <ResearchEvents events={events.data ?? []} />
+    {selectedItem && <ResearchItemDetail item={selectedItem} onClose={() => setSelectedItem(null)} />}
+  </section>;
+}
+
+function ResearchStatistics({ session }: { session: ResearchSession }) {
+  return <div className="research-statistics"><div><span>Найдено</span><strong>{session.collected_count}</strong></div><div><span>Оценено</span><strong>{session.processed_count}</strong></div><div><span>Расход</span><strong>{formatUsd(session.actual_cost_usd)}</strong></div></div>;
+}
+
+function ResearchActions({ session, pending, onAction }: { session: ResearchSession; pending: boolean; onAction: (value: "pause" | "resume" | "cancel") => void }) {
+  if (session.status === "paused") return <div className="research-actions"><Button onClick={() => onAction("resume")} disabled={pending}><RotateCcw size={16} />Продолжить</Button><Button className="button--ghost" onClick={() => onAction("cancel")} disabled={pending}>Остановить</Button></div>;
+  if (!activeStatuses.has(session.status)) return null;
+  return <div className="research-actions"><Button className="button--secondary" onClick={() => onAction("pause")} disabled={pending}><Pause size={16} />Пауза</Button><Button className="button--ghost" onClick={() => onAction("cancel")} disabled={pending}><StopCircle size={16} />Остановить</Button></div>;
+}
+
+function ResearchPlan({ session }: { session: ResearchSession }) {
+  const plan = session.search_plan;
+  if (!plan.product_type) return null;
+  return <details className="research-plan"><summary>Параметры поиска <ChevronRight size={17} /></summary><div className="research-plan__content">
+    <p><strong>{[plan.brand, plan.model_family, plan.product_type].filter(Boolean).join(" · ")}</strong>{plan.max_price ? ` · до ${plan.max_price} ${plan.currency ?? ""}` : ""}</p>
+    {plan.purpose && <p>{plan.purpose}</p>}
+    {plan.hard_requirements?.length ? <PlanRow label="Обязательно" values={plan.hard_requirements} /> : null}
+    {plan.soft_requirements?.length ? <PlanRow label="Условия" values={plan.soft_requirements} /> : null}
+    <PlanRow label="OLX" values={plan.search_queries ?? []} />
+    {plan.clarification_question && <p className="research-risk">Нужно уточнить: {plan.clarification_question}</p>}
+  </div></details>;
+}
+
+function PlanRow({ label, values }: { label: string; values: string[] }) { return values.length ? <div className="plan-row"><span>{label}</span><div>{values.map((value) => <Pill key={value}>{value}</Pill>)}</div></div> : null; }
+
+function ResearchListingCard({ item, onOpen }: { item: ResearchItem; onOpen: () => void }) {
+  const analysis = item.analysis;
+  return <button className="listing-card research-listing-card" onClick={onOpen}>
+    <div className="listing-card__placeholder">{item.score ?? "—"}<small>/100</small></div>
+    <div className="listing-card__body"><div className="listing-card__top"><Pill tone={item.recommendation === "shortlist" ? "green" : item.recommendation === "reject" ? "danger" : "amber"}>{recommendationLabels[item.recommendation ?? ""] ?? "В обработке"}</Pill><span>{item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : ""}</span></div><h3>{item.listing_snapshot.title ?? "Объявление"}</h3><strong>{priceText(item)}</strong><p>{analysis.summary ?? (item.status === "error" ? "Не удалось получить оценку." : "Ожидает оценки.")}</p>{analysis.risks?.[0] && <span className="risk-tag">{analysis.risks[0]}</span>}</div>
+  </button>;
+}
+
+function ResearchItemDetail({ item, onClose }: { item: ResearchItem; onClose: () => void }) {
+  const analysis = item.analysis;
+  return <div className="detail-overlay" role="dialog" aria-modal="true" aria-label="Объявление" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><article className="listing-detail-sheet">
+    <button className="icon-button listing-detail-sheet__close" onClick={onClose} aria-label="Закрыть"><X /></button>
+    <div className="listing-detail-sheet__score">{item.score ?? "—"}<span>/100</span></div>
+    <Pill tone={item.recommendation === "shortlist" ? "green" : "amber"}>{recommendationLabels[item.recommendation ?? ""] ?? "В обработке"}</Pill>
+    <h2>{item.listing_snapshot.title ?? "Объявление"}</h2><strong className="detail-price">{priceText(item)}</strong>
+    {analysis.summary && <p className="detail-summary">{analysis.summary}</p>}
+    <AnalysisGroup title="Преимущества" values={analysis.strengths} /><AnalysisGroup title="Риски" values={analysis.risks} danger /><AnalysisGroup title="Нужно уточнить" values={analysis.missing_information} />
+    {analysis.market_assessment && <section><h3>Обоснование оценки</h3><p>{analysis.market_assessment}</p></section>}
+    {analysis.evidence?.length ? <section><h3>Подтверждения</h3>{analysis.evidence.map((item, index) => <blockquote key={`${item.quote}-${index}`}>{item.quote}</blockquote>)}</section> : null}
+    <div className="detail-actions">{item.listing_snapshot.url && <Button onClick={() => telegram.open(item.listing_snapshot.url!)}><ExternalLink size={18} />Открыть на OLX</Button>}</div>
+  </article></div>;
+}
+
+function AnalysisGroup({ title, values, danger = false }: { title: string; values?: string[]; danger?: boolean }) { return values?.length ? <section className={danger ? "analysis-group analysis-group--danger" : "analysis-group"}><h3>{title}</h3><ul>{values.map((value) => <li key={value}>{value}</li>)}</ul></section> : null; }
+
+function ResearchEvents({ events }: { events: ResearchEvent[] }) { return <details className="research-events"><summary>Журнал работы <ChevronRight size={17} /></summary><div>{events.length ? events.map((event) => <p key={event.id}><time>{new Date(event.created_at).toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</time>{event.message}</p>) : <p>Событий пока нет.</p>}</div></details>; }
+
+function statusLabel(status: string) { return ({ queued: "В очереди", running: "Идёт поиск", completed: "Готово", paused: "Пауза", waiting_configuration: "Нужна настройка", needs_clarification: "Нужно уточнение", budget_exhausted: "Лимит исчерпан", failed: "Ошибка", cancelled: "Остановлено" } as Record<string, string>)[status] ?? status; }
+function statusTone(status: string) { return ({ running: "green", completed: "green", failed: "danger", budget_exhausted: "amber", needs_clarification: "amber", paused: "amber" } as Record<string, string>)[status] ?? "neutral"; }
+function progressLabel(session: ResearchSession) { return activeStatuses.has(session.status) ? `${session.processed_count}/${session.max_items} оценено` : `${session.processed_count} оценено`; }
+function formatUsd(value: string) { return `$${Number(value).toFixed(4)}`; }
+function priceText(item: ResearchItem) { return item.listing_snapshot.price ? `${Number(item.listing_snapshot.price).toLocaleString("ru-RU")} ${item.listing_snapshot.currency === "UAH" ? "грн" : item.listing_snapshot.currency ?? ""}` : "Цена не указана"; }
+function relativeDate(value: string) { return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(new Date(value)); }

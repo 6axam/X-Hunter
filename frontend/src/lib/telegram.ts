@@ -22,7 +22,8 @@ export const telegram = {
     const app = window.Telegram?.WebApp;
     app?.ready();
     app?.expand();
-    document.documentElement.dataset.theme = app?.colorScheme ?? "light";
+    // The Mini App keeps its graphite UI when opened outside Telegram as well.
+    document.documentElement.dataset.theme = app?.colorScheme ?? "dark";
   },
   open(url: string) {
     if (window.Telegram?.WebApp) window.Telegram.WebApp.openLink(url);
