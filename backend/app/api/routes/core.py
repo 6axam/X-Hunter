@@ -41,6 +41,7 @@ from app.services.exports import ExportService
 from app.services.findings import FindingService
 from app.services.media import owner_can_access_media
 from app.services.research import MARKETPLACES, ResearchService
+from app.services.research_trace import ResearchTraceExportService
 from app.services.runs import RunService
 from app.services.searches import SearchService
 from app.sources.olx import OlxSource
@@ -190,6 +191,29 @@ async def research_events(
         ResearchEventResponse.model_validate(item)
         for item in await research.events(user, session_id)
     ]
+
+
+@router.get(
+    "/research-sessions/{session_id}/diagnostics.zip",
+    response_class=Response,
+    tags=["research"],
+)
+async def export_research_diagnostics(
+    session_id: UUID,
+    user: CurrentUser,
+    db: DatabaseSession,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    archive, filename = await ResearchTraceExportService(db, settings).build(user, session_id)
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 def research_response(item) -> ResearchSessionResponse:

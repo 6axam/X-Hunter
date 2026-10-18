@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, CircleDollarSign, ExternalLink, Pause, Play, RotateCcw, SlidersHorizontal, StopCircle, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, CircleDollarSign, Download, ExternalLink, Pause, Play, RotateCcw, SlidersHorizontal, StopCircle, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ListingCard } from "../components/ListingCard";
 import { Button, Card, Pill, Skeleton } from "../components/ui";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, downloadResearchDiagnostics } from "../lib/api";
 import { telegram } from "../lib/telegram";
 import type { Marketplace, ResearchEvent, ResearchItem, ResearchSession } from "../types";
 
@@ -144,7 +144,8 @@ function ResearchAgentInsights({ session }: { session: ResearchSession }) {
   const final = session.final_comparison;
   const latestDecision = session.supervisor_decisions.at(-1);
   const market = session.market_statistics;
-  const hasContent = reasoning.product_category || session.product_hypotheses.length || session.research_rounds.length || final.conclusion;
+  const diagnostics = useMutation({ mutationFn: () => downloadResearchDiagnostics(session.id) });
+  const hasContent = reasoning.product_category || session.product_hypotheses.length || session.research_rounds.length || final.conclusion || session.trace_event_count > 0;
   if (!hasContent) return null;
   return <details className="research-plan"><summary>Ход исследования <ChevronRight size={17} /></summary><div className="research-plan__content">
     {reasoning.product_category && <p><strong>{reasoning.product_category}</strong>{reasoning.user_goal ? ` · ${reasoning.user_goal}` : ""}</p>}
@@ -155,6 +156,8 @@ function ResearchAgentInsights({ session }: { session: ResearchSession }) {
     {latestDecision && <p><strong>Решение агента:</strong> {latestDecision.reason}</p>}
     {market.sample_size ? <p>Рынок: {market.sample_size} оценённых цен, {market.min_price}–{market.max_price} {market.currency}; медиана {market.median_price}. {market.comparable ? "Выборка частично сопоставима." : "Сопоставимость недостаточна для точной рыночной цены."}</p> : null}
     {final.conclusion && <section className="analysis-group"><h3>Итог агента</h3><p>{final.conclusion}</p>{final.best_overall?.title && <p><strong>Основной вариант:</strong> {final.best_overall.title}. {final.best_overall.reason}</p>}{final.requires_clarification?.length ? <AnalysisGroup title="Уточнить перед покупкой" values={final.requires_clarification} /> : null}</section>}
+    <Button className="button--secondary research-diagnostics-export" onClick={() => diagnostics.mutate()} disabled={diagnostics.isPending}><Download size={16} />{diagnostics.isPending ? "Готовлю архив…" : "Экспорт диагностики"}</Button>
+    {diagnostics.error && <div className="error-block">{diagnostics.error instanceof ApiError ? diagnostics.error.message : "Не удалось экспортировать диагностику."}</div>}
   </div></details>;
 }
 

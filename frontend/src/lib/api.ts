@@ -37,6 +37,25 @@ export async function authenticate(initData: string): Promise<void> {
   sessionStorage.setItem("olx-hunter-csrf", csrfToken);
 }
 
+export async function downloadResearchDiagnostics(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/research-sessions/${id}/diagnostics.zip`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, body.code ?? "request_failed", body.message ?? "Ошибка экспорта");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `x-hunter-research-${id}-diagnostics.zip`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   me: () => request<Me>("/me"),
   searches: () => request<Search[]>("/searches"),

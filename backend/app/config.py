@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     research_max_rounds: int = 4
     research_max_queries_per_round: int = 5
     research_max_runtime_seconds: int = 720
+    research_trace_verbose: bool = True
+    research_trace_max_events: int = 5_000
+    research_trace_max_payload_bytes: int = 32_768
+    research_trace_max_total_bytes: int = 64_000_000
+    research_trace_retention_days: int = 30
 
     @field_validator("owner_telegram_id", mode="before")
     @classmethod

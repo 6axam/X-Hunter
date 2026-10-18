@@ -12,6 +12,8 @@ docker compose run --rm api alembic upgrade head
 
 `source_http_403`, `source_http_429`, `source_network_error` и `source_server_error` требуют backoff и не подтверждают снятие. `listing_removed` считается сигналом только для прямой ссылки; удаление выполняется после второго подтверждения.
 
+Для аудита отдельного ИИ-исследования скачайте ZIP кнопкой «Экспорт диагностики» в Mini App. Endpoint `GET /api/v1/research-sessions/{id}/diagnostics.zip` доступен только владельцу сессии и отдаётся с `Cache-Control: private, no-store`. События старше `RESEARCH_TRACE_RETENTION_DAYS` удаляются ежедневной задачей scheduler.
+
 ## Резервные копии
 
 ```bash

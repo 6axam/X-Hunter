@@ -220,6 +220,8 @@ class ResearchSessionResponse(BaseModel):
     error_code: str | None
     started_at: datetime | None
     finished_at: datetime | None
+    trace_event_count: int
+    trace_truncated: bool
     created_at: datetime
     updated_at: datetime
 

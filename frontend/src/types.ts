@@ -76,6 +76,7 @@ export type ResearchSession = {
   current_round: number;
   planning_estimated_cost_usd: string; planning_actual_cost_usd: string; planning_input_tokens: number; planning_output_tokens: number;
   error_code: string | null; started_at: string | null; finished_at: string | null; created_at: string; updated_at: string;
+  trace_event_count: number; trace_truncated: boolean;
 };
 
 export type ResearchItem = {

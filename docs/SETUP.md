@@ -99,6 +99,8 @@ docker compose exec api sh -c 'tail -n 100 /data/logs/api.log'
 
 OpenRouter без ключа выключен. При включении UI получает актуальный список моделей и цены через API; модель должна поддерживать structured outputs. Модель и тариф не зафиксированы навсегда в исходном коде.
 
+Внутри сворачиваемого блока «Ход исследования» есть кнопка «Экспорт диагностики». Она скачивает приватный ZIP конкретной сессии. Лимиты трассы задают `RESEARCH_TRACE_MAX_EVENTS`, `RESEARCH_TRACE_MAX_PAYLOAD_BYTES`, `RESEARCH_TRACE_MAX_TOTAL_BYTES` и `RESEARCH_TRACE_RETENTION_DAYS`; `RESEARCH_TRACE_VERBOSE=false` даёт более компактные payload.
+
 ## 5. Локальные панели управления
 
 Compose включает Portainer для управления Docker. После запуска откройте на этом компьютере:

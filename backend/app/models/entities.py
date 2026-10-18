@@ -21,7 +21,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UuidPrimaryKeyMixin
+from app.models.base import Base, TimestampMixin, UuidPrimaryKeyMixin, utcnow
 
 
 class User(UuidPrimaryKeyMixin, TimestampMixin, Base):
@@ -218,6 +218,9 @@ class ResearchSession(UuidPrimaryKeyMixin, TimestampMixin, Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    trace_event_count: Mapped[int] = mapped_column(Integer, default=0)
+    trace_payload_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    trace_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ResearchItem(UuidPrimaryKeyMixin, TimestampMixin, Base):
@@ -257,6 +260,30 @@ class ResearchEvent(UuidPrimaryKeyMixin, TimestampMixin, Base):
     )
     kind: Mapped[str] = mapped_column(String(48), index=True)
     message: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
+
+
+class ResearchTraceEvent(UuidPrimaryKeyMixin, Base):
+    """Durable, bounded diagnostic evidence for one research run."""
+
+    __tablename__ = "research_trace_events"
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence"),
+        Index("ix_research_trace_session_time", "session_id", "occurred_at"),
+        Index("ix_research_trace_retention", "occurred_at"),
+    )
+
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("research_sessions.id", ondelete="CASCADE"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    round_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    query_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    listing_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    stage: Mapped[str] = mapped_column(String(80), index=True)
+    event_type: Mapped[str] = mapped_column(String(120), index=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(SAJSON, default=dict)
 
 

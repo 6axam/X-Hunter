@@ -43,6 +43,10 @@ celery_app.conf.update(
             "task": "app.jobs.tasks.cleanup_exports",
             "schedule": 3600.0,
         },
+        "cleanup-research-traces": {
+            "task": "app.jobs.tasks.cleanup_research_traces",
+            "schedule": 86400.0,
+        },
     },
     imports=("app.jobs.tasks",),
 )

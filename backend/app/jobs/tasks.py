@@ -7,19 +7,28 @@ from pathlib import Path
 from uuid import UUID
 
 from aiogram import Bot
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 
 from app.ai.openrouter import OpenRouterClient
 from app.config import get_settings
 from app.database import engine, session_factory
 from app.jobs.celery_app import celery_app
 from app.logging import get_logger
-from app.models import ExportJob, Listing, ListingVersion, ResearchSession, Search, SearchMatch
+from app.models import (
+    ExportJob,
+    Listing,
+    ListingVersion,
+    ResearchSession,
+    ResearchTraceEvent,
+    Search,
+    SearchMatch,
+)
 from app.models.base import utcnow
 from app.notifications.telegram import TelegramOutbox
 from app.services.ai import AiService
 from app.services.media import process_pending_media
 from app.services.research import ResearchService
+from app.services.research_trace import ResearchTraceRecorder
 from app.services.runs import RunService
 from app.services.scanning import ScanService
 from app.sources.olx import OlxSource
@@ -104,7 +113,24 @@ async def _run_research(session_id: UUID) -> str:
         "Research task started", extra={"research_id": session_id, "event": "research_task_started"}
     )
     async with session_factory() as db:
-        status = await ResearchService(db, settings).run(session_id)
+        try:
+            status = await ResearchService(db, settings).run(session_id)
+        except Exception as exc:
+            await db.rollback()
+            session = await db.get(ResearchSession, session_id)
+            if session is not None:
+                await ResearchTraceRecorder(db, settings).record(
+                    session,
+                    stage="persistence",
+                    event_type="worker_crashed",
+                    round_id=session.current_round or None,
+                    payload={
+                        "stage": session.stage,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                await db.commit()
+            raise
     logger.info(
         "Research task finished",
         extra={"research_id": session_id, "event": "research_task_finished", "status": status},
@@ -263,3 +289,19 @@ async def _cleanup_exports() -> int:
             await db.delete(job)
         await db.commit()
         return len(jobs)
+
+
+@celery_app.task(name="app.jobs.tasks.cleanup_research_traces")
+def cleanup_research_traces() -> int:
+    return _run_task(_cleanup_research_traces())
+
+
+async def _cleanup_research_traces() -> int:
+    settings = get_settings()
+    cutoff = utcnow() - timedelta(days=settings.research_trace_retention_days)
+    async with session_factory() as db:
+        result = await db.execute(
+            delete(ResearchTraceEvent).where(ResearchTraceEvent.occurred_at < cutoff)
+        )
+        await db.commit()
+        return int(result.rowcount or 0)

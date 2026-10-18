@@ -2,10 +2,11 @@ from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.models import ResearchSession, User
+from app.models import ResearchSession, ResearchTraceEvent, User
 from app.services.research import ResearchService
 from app.sources.base import SourceResult, SourceState
 from app.sources.olx import OlxSource
@@ -357,7 +358,7 @@ async def test_agent_v2_runs_durable_round_and_final_comparison(
         async def analyze_research_item(self, **_: object):
             return ResearchAnalysisResult(
                 recommendation="shortlist",
-                score=81,
+                score=7,
                 confidence=0.8,
                 summary="Intel и SSD подтверждены.",
                 strengths=["Intel i5"],
@@ -449,3 +450,25 @@ async def test_agent_v2_runs_durable_round_and_final_comparison(
     ]
     assert session.final_comparison["best_overall"]["title"] == candidate.title
     assert session.stage_usage["technical_reasoning"]["calls"] == 1
+    trace_events = list(
+        await db_session.scalars(
+            select(ResearchTraceEvent).where(ResearchTraceEvent.session_id == session.id)
+        )
+    )
+    trace_types = {event.event_type for event in trace_events}
+    assert {
+        "technical_reasoning_completed",
+        "search_planner_completed",
+        "olx_search_page_completed",
+        "prefilter_decision",
+        "deep_analysis_completed",
+        "market_statistics_calculated",
+        "supervisor_completed",
+        "round_checkpoint_saved",
+        "final_comparison_completed",
+    } <= trace_types
+    assert any(
+        event.event_type == "logical_contradiction"
+        and event.payload["code"] == "shortlist_with_low_score"
+        for event in trace_events
+    )
