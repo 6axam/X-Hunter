@@ -13,8 +13,9 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   useEffect(() => {
-    telegram.init();
+    const stopTelegramSync = telegram.init();
     authenticate(telegram.app?.initData ?? "").catch((error: Error) => setAuthError(error.message)).finally(() => setReady(true));
+    return stopTelegramSync;
   }, []);
   if (!ready) return <div className="splash"><span className="brand__mark">OH</span><p>Подключаем приложение…</p></div>;
   if (authError) return <div className="fatal"><span className="eyebrow">Доступ закрыт</span><h1>Не удалось войти</h1><p>{authError}</p>{authError.includes("устарела") && <p>Закройте Mini App полностью и откройте его заново из нового сообщения бота.</p>}<button className="button" onClick={() => location.reload()}>Повторить</button></div>;

@@ -1,9 +1,27 @@
+import { useCallback, useEffect } from "react";
 import { Bookmark, Radar, Settings, Sparkles } from "lucide-react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { telegram } from "../lib/telegram";
 
 export function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const isDetail = /^\/(research|findings)\/[^/]+/.test(location.pathname);
+  const usesBackNavigation = isDetail || location.pathname === "/settings";
+  const fallbackRoute = location.pathname.startsWith("/findings/") ? "/findings" : "/research";
+  const goBack = useCallback(() => {
+    if (window.history.length > 1) navigate(-1);
+    else navigate(fallbackRoute, { replace: true });
+  }, [fallbackRoute, navigate]);
+
+  useEffect(() => {
+    if (!usesBackNavigation) {
+      telegram.hideBackButton();
+      return;
+    }
+    return telegram.showBackButton(goBack);
+  }, [goBack, usesBackNavigation]);
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -33,4 +51,3 @@ const items = [
   { to: "/searches", label: "Мониторинг", icon: Radar },
   { to: "/findings", label: "Находки", icon: Bookmark },
 ];
-
