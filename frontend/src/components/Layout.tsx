@@ -12,7 +12,7 @@ export function Layout() {
         <NavLink to="/settings" className="sidebar-settings"><Settings size={18} />Настройки</NavLink>
       </aside>
       <main className={`content${isDetail ? " content--detail" : ""}`}>
-        {!isDetail && <header className="app-bar"><NavLink to="/research" className="app-bar__brand">X-Hunter</NavLink><NavLink to="/settings" className="app-bar__settings" aria-label="Настройки"><Settings size={20} /></NavLink></header>}
+        {!isDetail && <header className="app-bar"><NavLink to="/research" className="app-bar__brand">X-Hunter</NavLink>{location.pathname !== "/settings" && <NavLink to="/settings" className="app-bar__settings" aria-label="Настройки"><Settings size={20} /></NavLink>}</header>}
         <Outlet />
       </main>
       {!isDetail && <Navigation className="bottom-nav" />}

@@ -61,6 +61,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .screen { display: grid; gap: var(--space-4); }
 .screen-heading { display: flex; gap: var(--space-3); align-items: end; justify-content: space-between; }
 .screen-heading p { margin: 5px 0 0; color: var(--muted); font-size: .78rem; }
+.settings-header { display: grid; gap: 4px; }.settings-header h1 { margin: 0; }
 .section-heading { display: flex; margin-top: 8px; align-items: center; justify-content: space-between; }
 .section-heading h2 { margin: 0; font-size: .95rem; }
 .section-heading > span { min-width: 24px; padding: 3px 7px; border-radius: 999px; color: var(--muted); background: var(--surface-raised); font-size: .7rem; font-weight: 750; text-align: center; }
