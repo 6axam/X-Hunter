@@ -174,6 +174,43 @@ async def test_multi_query_collection_deduplicates_candidates(db_session: AsyncS
 
 
 @pytest.mark.asyncio
+async def test_restart_reuses_persisted_search_plan_without_another_ai_call(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = User(telegram_id=333)
+    db_session.add(owner)
+    await db_session.commit()
+    session = ResearchSession(
+        owner_id=owner.id,
+        query="синкпад до 5к",
+        marketplaces=["olx"],
+        model="vendor/model",
+        status="running",
+        stage="collecting_olx",
+        max_items=1,
+        budget_usd=Decimal("0.10"),
+        search_plan={
+            "product_type": "laptop",
+            "brand": "Lenovo",
+            "model_family": "ThinkPad",
+            "max_price": 5000,
+            "currency": "UAH",
+            "search_queries": ["Lenovo ThinkPad"],
+        },
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    def unexpected_planner(*args: object, **kwargs: object) -> None:
+        raise AssertionError("persisted plan must be reused after a restart")
+
+    monkeypatch.setattr("app.services.research.OpenRouterClient", unexpected_planner)
+    service = ResearchService(db_session, Settings())
+
+    assert await service._ensure_search_plan(session, {"pricing": {}})
+
+
+@pytest.mark.asyncio
 async def test_olx_rejects_homepage_as_a_search_result() -> None:
     source = OlxSource(http_enabled=True)
     specification = source.parse_search_url("https://www.olx.ua/uk/list/q-ThinkPad/").search
