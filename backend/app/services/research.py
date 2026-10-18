@@ -33,6 +33,7 @@ _TOKEN_PATTERN = re.compile(r"[a-zа-яіїєґ0-9]+", re.IGNORECASE)
 _PRODUCT_TERMS = {
     "laptop": {"laptop", "notebook", "ноутбук", "ноут", "лептоп"},
     "notebook": {"laptop", "notebook", "ноутбук", "ноут", "лептоп"},
+    "ноутбук": {"laptop", "notebook", "ноутбук", "ноут", "лептоп"},
     "phone": {"phone", "smartphone", "телефон", "смартфон", "мобільний"},
     "smartphone": {"phone", "smartphone", "телефон", "смартфон", "мобільний"},
     "bicycle": {"bicycle", "bike", "велосипед", "вел"},
@@ -49,6 +50,16 @@ _UNRELATED_PRODUCT_TERMS = {
     "карта",
     "послуги",
     "услуги",
+    "блок",
+    "живлення",
+    "зарядка",
+    "зарядний",
+    "акумулятор",
+    "батарея",
+    "клавіатура",
+    "клавиатура",
+    "екран",
+    "экран",
 }
 _BRAND_ALIASES = {
     "lenovo": {"lenovo", "леново"},

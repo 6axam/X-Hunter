@@ -94,6 +94,13 @@ def test_thinkpad_prefilter_rejects_unrelated_and_wrong_brand_cards() -> None:
         price=Decimal("4500"),
         currency="UAH",
     )
+    power_supply = ListingCandidate(
+        source_listing_id="IDpower",
+        canonical_url="https://www.olx.ua/d/uk/obyavlenie/power-IDpower.html",
+        title="Блок живлення Lenovo ThinkPad",
+        price=Decimal("900"),
+        currency="UAH",
+    )
     asus = ListingCandidate(
         source_listing_id="IDasus",
         canonical_url="https://www.olx.ua/d/uk/obyavlenie/asus-IDasus.html",
@@ -110,6 +117,7 @@ def test_thinkpad_prefilter_rejects_unrelated_and_wrong_brand_cards() -> None:
     )
 
     assert service._deterministic_relevance(motorcycle, plan)[0] == "reject"
+    assert service._deterministic_relevance(power_supply, plan)[0] == "reject"
     assert service._deterministic_relevance(asus, plan)[0] == "reject"
     assert service._deterministic_relevance(thinkpad, plan)[0] == "accept"
 
